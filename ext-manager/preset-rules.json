@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "description": "预设规则配置文件 - 用于首次安装时自动加载",
+  "lastUpdated": "2026-02-08",
+  "whitelist": [
+    "jcehmiopmjjbdakjgjjlfjipbjfcablj",
+    "dhdgffkkebhmkfjojejmpbldmpobfkfo"
+  ],
+  "rules": {
+    "cmedhionkhpnakcndndgjdbohmhepckk": [
+      "/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:youtube\\.com|youtube-nocookie\\.com|youtu\\.be)(?::\\d+)?(?:[/?#]|$)/i"
+    ],
+    "pjebbdjhagepdcagkacbpccagmnjomoj": [
+      "chrome://bookmarks/"
+    ],
+    "cieikaeocafmceoapfogpffaalkncpkc": [
+      "github.com"
+    ],
+    "ghbmnnjooekpmoecnnnilnnbdlolhkhi": [
+      "docs.google.com"
+    ],
+    "ldipcbpaocekfooobnbcddclnhejkcpn": [
+      "scholar.google.com"
+    ],
+    "fkepacicchenbjecpbpbclokcabebhah": [
+      "bookmarks.icloud.com"
+    ],
+    "pejdijmoenmkgeppbflobdenhhabjlaj": [
+      "*"
+    ],
+    "bapgbgfcjpeakbjcidibdcndbmdngkdf": [
+      "youtube.com",
+      "bilibili.com",
+      "youku.com",
+      "v.qq.com",
+      "iqiyi.com",
+      "tv.sohu.com",
+      "v.163.com"
+    ],
+    "jgddbbpaobnapjkdalbdmpognmepgpog": [
+      "/^https?:\\/\\/.+/"
+    ]
+  },
+  "aliases": {
+    "cmedhionkhpnakcndndgjdbohmhepckk": [
+      "adblock for youtube",
+      "ad block for youtube",
+      "adblocker for youtube",
+      "ad blocker for youtube",
+      "adblock youtube",
+      "youtube adblock",
+      "youtube ad blocker"
+    ]
+  }
+}

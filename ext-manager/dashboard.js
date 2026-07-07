@@ -14,6 +14,7 @@ async function init() {
     setupSearch();
     setupModal();
     setupLogActions();
+    setupRuleActions();
 }
 
 async function refreshData() {
@@ -175,6 +176,10 @@ async function toggleExtension(id, enabled) {
 const modal = document.getElementById('ruleModal');
 let tempRules = []; // Temporary rules for the currently open modal
 
+function isRegexRule(rule) {
+    return typeof rule === 'string' && rule.startsWith('/') && rule.lastIndexOf('/') > 0;
+}
+
 function setupModal() {
     document.getElementById('closeModal').addEventListener('click', closeModal);
     document.getElementById('cancelModal').addEventListener('click', closeModal);
@@ -194,7 +199,9 @@ function setupModal() {
         // Validation
         if (value.startsWith('/')) {
             try {
-                new RegExp(value.slice(1, -1));
+                const lastSlash = value.lastIndexOf('/');
+                if (lastSlash <= 0) throw new Error('Missing closing slash');
+                new RegExp(value.slice(1, lastSlash), value.slice(lastSlash + 1));
             } catch(e) {
                 alert('Invalid Regex Pattern');
                 return;
@@ -240,7 +247,7 @@ function renderRulesView() {
 
         const tr = document.createElement('tr');
         const ruleTags = rules[id].map(r => {
-            const isRegex = r.startsWith('/') && r.endsWith('/');
+            const isRegex = isRegexRule(r);
             return `<span class="tag ${isRegex ? 'regex' : 'domain'}">${r}</span>`;
         }).join('');
 
@@ -278,6 +285,43 @@ function setupLogActions() {
             await chrome.runtime.sendMessage({ action: 'clearLogs' });
             renderFullLogs();
             renderLogsPreview();
+        });
+    }
+}
+
+// --- Rule Import/Export ---
+function setupRuleActions() {
+    const importBtn = document.getElementById('importPresetBtn');
+    if (importBtn) {
+        importBtn.addEventListener('click', async () => {
+            if (confirm('导入预设规则将完全覆盖当前规则，确定要继续吗？')) {
+                const response = await chrome.runtime.sendMessage({ action: 'importPresetRules' });
+                if (response.success) {
+                    alert('预设规则导入成功！');
+                    await refreshData();
+                } else {
+                    alert('导入失败：' + response.error);
+                }
+            }
+        });
+    }
+
+    const exportBtn = document.getElementById('exportRulesBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', async () => {
+            const response = await chrome.runtime.sendMessage({ action: 'exportRules' });
+            if (response.success) {
+                const dataStr = JSON.stringify(response.data, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ext-manager-rules-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } else {
+                alert('导出失败');
+            }
         });
     }
 }
@@ -355,7 +399,7 @@ function renderModalRules() {
     }
 
     tempRules.forEach((rule, index) => {
-        const isRegex = rule.startsWith('/') && rule.endsWith('/');
+        const isRegex = isRegexRule(rule);
         const item = document.createElement('div');
         item.className = 'rule-item';
         

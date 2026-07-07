@@ -441,6 +441,17 @@ body {
   margin-bottom: 24px;
 }
 
+.rules-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.rules-actions {
+  display: flex;
+  gap: 12px;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
