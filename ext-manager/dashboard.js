@@ -175,14 +175,225 @@ async function toggleExtension(id, enabled) {
 // --- Rule Modal & Regex Logic ---
 const modal = document.getElementById('ruleModal');
 let tempRules = []; // Temporary rules for the currently open modal
+const RULE_PRESETS = [
+    {
+        id: 'youtube',
+        name: 'YouTube',
+        rules: [
+            '/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:youtube\\.com|youtube-nocookie\\.com|youtu\\.be)(?::\\d+)?(?:[/?#]|$)/i'
+        ]
+    },
+    {
+        id: 'google-search',
+        name: 'Google Search',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*google\\.[a-z.]+(?::\\d+)?\\/(?:search|webhp|imghp|maps|shopping|travel|flights)(?:[/?#]|$)/i']
+    },
+    {
+        id: 'gmail',
+        name: 'Gmail',
+        rules: ['/^https?:\\/\\/(?:mail\\.google\\.com|inbox\\.google\\.com)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'google-docs',
+        name: 'Google Docs / Sheets / Slides',
+        rules: ['/^https?:\\/\\/docs\\.google\\.com(?::\\d+)?\\/(?:document|spreadsheets|presentation|forms|drawings)(?:[/?#]|$)/i']
+    },
+    {
+        id: 'google-drive',
+        name: 'Google Drive',
+        rules: ['/^https?:\\/\\/drive\\.google\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'google-scholar',
+        name: 'Google Scholar',
+        rules: ['/^https?:\\/\\/scholar\\.google\\.[a-z.]+(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'github',
+        name: 'GitHub',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*github\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'gitlab',
+        name: 'GitLab',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*gitlab\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'stackoverflow',
+        name: 'Stack Overflow / Stack Exchange',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:stackoverflow\\.com|stackexchange\\.com|serverfault\\.com|superuser\\.com|askubuntu\\.com)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'reddit',
+        name: 'Reddit',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*reddit\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'x-twitter',
+        name: 'X / Twitter',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:x\\.com|twitter\\.com|t\\.co)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'facebook',
+        name: 'Facebook / Messenger',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:facebook\\.com|messenger\\.com|fb\\.com|fb\\.me)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'instagram',
+        name: 'Instagram',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*instagram\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'linkedin',
+        name: 'LinkedIn',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*linkedin\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'amazon',
+        name: 'Amazon',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*amazon\\.[a-z.]+(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'netflix',
+        name: 'Netflix',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*netflix\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'bilibili',
+        name: 'Bilibili',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:bilibili\\.com|b23\\.tv)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'zhihu',
+        name: 'Zhihu',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*zhihu\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'weibo',
+        name: 'Weibo',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:weibo\\.com|weibo\\.cn)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'baidu',
+        name: 'Baidu',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*baidu\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'wikipedia',
+        name: 'Wikipedia',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*wikipedia\\.org(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'openai-chatgpt',
+        name: 'OpenAI / ChatGPT',
+        rules: ['/^https?:\\/\\/(?:chatgpt\\.com|(?:[a-z0-9-]+\\.)*openai\\.com)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'slack',
+        name: 'Slack',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*slack\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'discord',
+        name: 'Discord',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*discord\\.(?:com|gg)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'notion',
+        name: 'Notion',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*notion\\.(?:site|so)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'figma',
+        name: 'Figma',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*figma\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'atlassian',
+        name: 'Jira / Confluence',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*atlassian\\.net(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'trello',
+        name: 'Trello',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*trello\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'dropbox',
+        name: 'Dropbox',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*dropbox\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'icloud',
+        name: 'iCloud',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*icloud\\.com(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'microsoft-365',
+        name: 'Microsoft 365 / Outlook / Teams',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:office\\.com|microsoft365\\.com|live\\.com|outlook\\.com|office365\\.com|teams\\.microsoft\\.com)(?::\\d+)?(?:[/?#]|$)/i']
+    },
+    {
+        id: 'zoom',
+        name: 'Zoom',
+        rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*zoom\\.us(?::\\d+)?(?:[/?#]|$)/i']
+    }
+];
 
 function isRegexRule(rule) {
     return typeof rule === 'string' && rule.startsWith('/') && rule.lastIndexOf('/') > 0;
 }
 
+function validateRegexRule(rule) {
+    const lastSlash = rule.lastIndexOf('/');
+    if (lastSlash <= 0) throw new Error('Missing closing slash');
+    new RegExp(rule.slice(1, lastSlash), rule.slice(lastSlash + 1));
+}
+
+function addRulesToModal(newRules) {
+    let added = 0;
+    newRules.forEach(rule => {
+        if (!tempRules.includes(rule)) {
+            tempRules.push(rule);
+            added += 1;
+        }
+    });
+    renderModalRules();
+    return added;
+}
+
+function setupPresetRules() {
+    const select = document.getElementById('presetRuleSelect');
+    if (!select) return;
+
+    RULE_PRESETS.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.name;
+        select.appendChild(option);
+    });
+}
+
 function setupModal() {
     document.getElementById('closeModal').addEventListener('click', closeModal);
     document.getElementById('cancelModal').addEventListener('click', closeModal);
+    setupPresetRules();
+
+    document.getElementById('addPresetRuleBtn').addEventListener('click', () => {
+        const select = document.getElementById('presetRuleSelect');
+        const preset = RULE_PRESETS.find(item => item.id === select.value);
+        if (!preset) return;
+
+        try {
+            preset.rules.forEach(validateRegexRule);
+        } catch (e) {
+            alert(`Preset Regex Invalid: ${preset.name}`);
+            return;
+        }
+
+        addRulesToModal(preset.rules);
+        select.value = '';
+    });
     
     document.getElementById('addRuleBtn').addEventListener('click', () => {
         const input = document.getElementById('newRuleInput');
@@ -199,17 +410,14 @@ function setupModal() {
         // Validation
         if (value.startsWith('/')) {
             try {
-                const lastSlash = value.lastIndexOf('/');
-                if (lastSlash <= 0) throw new Error('Missing closing slash');
-                new RegExp(value.slice(1, lastSlash), value.slice(lastSlash + 1));
+                validateRegexRule(value);
             } catch(e) {
                 alert('Invalid Regex Pattern');
                 return;
             }
         }
 
-        tempRules.push(value);
-        renderModalRules();
+        addRulesToModal([value]);
         input.value = '';
     });
 
