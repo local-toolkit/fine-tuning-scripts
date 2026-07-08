@@ -5,20 +5,8 @@
   "description": "Control video playback speed on any website. Default 1.5x. Press 's' to slow down, 'd' to speed up.",
   "permissions": [
     "storage",
-    "scripting",
-    "activeTab"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "css": ["content.css"],
-      "run_at": "document_end",
-      "all_frames": true
-    }
+    "activeTab",
+    "scripting"
   ],
   "action": {
     "default_popup": "popup.html",

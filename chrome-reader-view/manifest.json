@@ -22,18 +22,5 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["lib/Readability.js", "content.js"],
-      "css": ["reader-overlay.css"]
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["reader.html"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

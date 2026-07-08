@@ -2,9 +2,67 @@
 
 let extensions = [];
 let rules = {};
-let whitelist = [];
 let pinned = [];
 let currentEditId = null;
+let devRuntimeState = null;
+
+function getDevRuntimeState() {
+    if (devRuntimeState) return devRuntimeState;
+
+    const devIcon = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"%3E%3Crect width="48" height="48" rx="10" fill="%232563eb"/%3E%3Cpath fill="white" d="M15 14h18v4H20v4h11v4H20v4h13v4H15z"/%3E%3C/svg%3E';
+    devRuntimeState = {
+        extensions: [
+            { id: 'reader', name: 'Reader View Assistant', enabled: true, iconUrl: devIcon },
+            { id: 'speed', name: 'QuickSpeed Video Controller', enabled: true, iconUrl: devIcon },
+            { id: 'clipper', name: 'Research Clipper for Long Articles', enabled: false, iconUrl: devIcon },
+            { id: 'translate', name: 'Context Translator', enabled: false, iconUrl: devIcon },
+            { id: 'focus', name: 'Focus Tab Cleaner', enabled: true, iconUrl: devIcon }
+        ],
+        rules: {
+            reader: ['wikipedia.org', '/^https?:\\/\\/(?:[a-z0-9-]+\\.)*github\\.com/i'],
+            speed: ['youtube.com', 'bilibili.com']
+        },
+        pinned: ['speed']
+    };
+
+    return devRuntimeState;
+}
+
+async function sendRuntimeMessage(message) {
+    if (globalThis.chrome && chrome.runtime && chrome.runtime.sendMessage) {
+        return chrome.runtime.sendMessage(message);
+    }
+
+    const devState = getDevRuntimeState();
+    switch (message.action) {
+        case 'getData':
+            return {
+                extensions: devState.extensions,
+                rules: devState.rules,
+                pinned: devState.pinned
+            };
+        case 'savePinned':
+            devState.pinned = message.pinned;
+            return { success: true };
+        case 'toggleExt':
+            for (const ext of devState.extensions) {
+                if (ext.id === message.id) {
+                    ext.enabled = message.enabled;
+                    break;
+                }
+            }
+            return { success: true };
+        case 'saveRules':
+            devState.rules = message.rules;
+            return { success: true };
+        case 'importPresetRules':
+            return { success: true };
+        case 'exportRules':
+            return { success: true, data: devState.rules };
+        default:
+            return {};
+    }
+}
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -13,15 +71,16 @@ async function init() {
     setupNavigation();
     setupSearch();
     setupModal();
-    setupLogActions();
     setupRuleActions();
+    setupExtensionGridActions();
+    setupRulesTableActions();
+    setupModalRuleActions();
 }
 
 async function refreshData() {
-    const data = await chrome.runtime.sendMessage({ action: 'getData' });
+    const data = await sendRuntimeMessage({ action: 'getData' });
     extensions = data.extensions;
     rules = data.rules;
-    whitelist = data.whitelist;
     pinned = data.pinned || [];
     
     updateStats();
@@ -31,32 +90,33 @@ async function refreshData() {
 function renderCurrentView() {
     const activeNav = document.querySelector('.nav-item.active');
     const viewId = activeNav ? activeNav.dataset.view : 'dashboard';
-    
-    renderExtensions(); // Always render extension grid in background? Or just when needed.
-    
-    if (viewId === 'dashboard') {
-        renderLogsPreview();
-    } else if (viewId === 'extensions') {
-        // extensions already rendered by renderExtensions
+
+    if (viewId === 'extensions') {
+        renderExtensions();
     } else if (viewId === 'rules') {
         renderRulesView();
-    } else if (viewId === 'logs') {
-        renderFullLogs();
     }
 }
 
 // --- Navigation ---
 function setupNavigation() {
-    document.querySelectorAll('.nav-item').forEach(item => {
+    const navItems = document.querySelectorAll('.nav-item');
+    const viewSections = document.querySelectorAll('.view-section');
+
+    for (const item of navItems) {
         item.addEventListener('click', (e) => {
             e.preventDefault();
             // nav state
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            for (const navItem of navItems) {
+                navItem.classList.remove('active');
+            }
             item.classList.add('active');
             
             // view state
             const viewId = item.dataset.view;
-            document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
+            for (const view of viewSections) {
+                view.classList.remove('active');
+            }
             const viewEl = document.getElementById(`view-${viewId}`);
             if (viewEl) viewEl.classList.add('active');
             
@@ -65,14 +125,22 @@ function setupNavigation() {
 
             renderCurrentView();
         });
-    });
+    }
 }
 
 // --- Stats ---
 function updateStats() {
     const total = extensions.length;
-    const active = extensions.filter(e => e.enabled).length;
-    const managed = Object.keys(rules).length;
+    let active = 0;
+    let managed = 0;
+
+    for (const ext of extensions) {
+        if (ext.enabled) active += 1;
+    }
+
+    for (const id in rules) {
+        if (rules[id]) managed += 1;
+    }
 
     document.getElementById('statTotal').textContent = total;
     document.getElementById('statActive').textContent = active;
@@ -85,6 +153,9 @@ function renderExtensions(filter = 'all', searchTerm = '') {
     if (!grid) return;
     grid.innerHTML = '';
 
+    const searchInput = document.getElementById('globalSearch');
+    const search = (searchTerm || searchInput?.value || '').toLowerCase();
+    const fragment = document.createDocumentFragment();
     const sortedExtensions = extensions.sort((a, b) => {
         // Pinned extensions first
         const aPinned = pinned.includes(a.id);
@@ -101,81 +172,115 @@ function renderExtensions(filter = 'all', searchTerm = '') {
         return a.name.localeCompare(b.name);
     });
 
-    sortedExtensions.forEach(ext => {
+    for (const ext of sortedExtensions) {
         // Filters
-        if (filter === 'enabled' && !ext.enabled) return;
-        if (filter === 'disabled' && ext.enabled) return;
-        const search = document.getElementById('globalSearch') ? document.getElementById('globalSearch').value : '';
-        if (search && !ext.name.toLowerCase().includes(search.toLowerCase())) return;
+        if (filter === 'enabled' && !ext.enabled) continue;
+        if (filter === 'disabled' && ext.enabled) continue;
+        if (search && !ext.name.toLowerCase().includes(search)) continue;
 
         const isManaged = !!rules[ext.id];
         const isPinned = pinned.includes(ext.id);
         const card = document.createElement('div');
         card.className = 'ext-card';
-        card.style.position = 'relative';
         
         // Icon
-        const iconUrl = ext.icons ? ext.icons[ext.icons.length - 1].url : 'icon48.png';
-        
         card.innerHTML = `
-            <button class="pin-btn ${isPinned ? 'pinned' : ''}" title="Pin to top">📌</button>
-            <img src="${iconUrl}" class="ext-icon" alt="icon">
+            <button class="pin-btn ${isPinned ? 'pinned' : ''}" data-id="${ext.id}" title="${isPinned ? '取消置顶' : '置顶'}" aria-label="${isPinned ? '取消置顶' : '置顶'}"></button>
+            <img src="${ext.iconUrl || 'icon48.png'}" class="ext-icon" alt="icon">
             <div class="ext-info">
                 <div class="ext-name" title="${ext.name}">${ext.name}</div>
-                <div class="ext-status ${ext.enabled ? 'enabled' : 'disabled'}">
-                    ${ext.enabled ? 'Active' : 'Inactive'}
+                <div class="ext-meta">
+                    <span class="ext-status ${ext.enabled ? 'enabled' : 'disabled'}">
+                        ${ext.enabled ? '运行中' : '已停用'}
+                    </span>
+                    ${isManaged ? '<span class="ext-badge auto">AUTO</span>' : ''}
                 </div>
-                ${isManaged ? '<span style="font-size:10px; color:#3699ff; background:#e1f0ff; padding:2px 4px; border-radius:4px;">AUTO</span>' : ''}
                 <div class="ext-actions">
-                    <button class="btn-sm toggle-btn" data-id="${ext.id}">
-                        ${ext.enabled ? 'Disable' : 'Enable'}
+                    <button class="btn-sm toggle-btn ${ext.enabled ? 'is-enabled' : ''}" data-id="${ext.id}">
+                        ${ext.enabled ? '停用' : '启用'}
                     </button>
                     <button class="btn-sm btn-rule" data-id="${ext.id}">
-                        ${isManaged ? 'Edit Rules' : 'Add Rule'}
+                        ${isManaged ? '编辑规则' : '添加规则'}
                     </button>
                 </div>
             </div>
         `;
 
-        card.querySelector('.pin-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            togglePin(ext.id);
-        });
-        card.querySelector('.toggle-btn').addEventListener('click', () => toggleExtension(ext.id, !ext.enabled));
-        card.querySelector('.btn-rule').addEventListener('click', () => openRuleEditor(ext.id));
-        
-        grid.appendChild(card);
+        fragment.appendChild(card);
+    }
+
+    grid.appendChild(fragment);
+}
+
+function setupExtensionGridActions() {
+    const grid = document.getElementById('extGrid');
+    if (!grid) return;
+
+    grid.addEventListener('click', (e) => {
+        const pinBtn = e.target.closest('.pin-btn');
+        if (pinBtn) {
+            togglePin(pinBtn.dataset.id);
+            return;
+        }
+
+        const toggleBtn = e.target.closest('.toggle-btn');
+        if (toggleBtn) {
+            const ext = extensions.find(item => item.id === toggleBtn.dataset.id);
+            if (ext) toggleExtension(ext.id, !ext.enabled);
+            return;
+        }
+
+        const ruleBtn = e.target.closest('.btn-rule');
+        if (ruleBtn) {
+            openRuleEditor(ruleBtn.dataset.id);
+        }
     });
 }
 
 async function togglePin(id) {
-    if (pinned.includes(id)) {
-        pinned = pinned.filter(p => p !== id);
+    const pinnedIndex = pinned.indexOf(id);
+    if (pinnedIndex >= 0) {
+        pinned.splice(pinnedIndex, 1);
     } else {
         pinned.push(id);
     }
-    await chrome.runtime.sendMessage({ action: 'savePinned', pinned });
-    renderExtensions();
+    await sendRuntimeMessage({ action: 'savePinned', pinned });
+    if (getCurrentViewId() === 'extensions') {
+        renderExtensions();
+    }
 }
 
 // --- Searching ---
+function getCurrentViewId() {
+    const activeNav = document.querySelector('.nav-item.active');
+    return activeNav ? activeNav.dataset.view : 'dashboard';
+}
+
 function setupSearch() {
     const input = document.getElementById('globalSearch');
     input.addEventListener('input', (e) => {
-        renderExtensions('all', e.target.value);
+        if (getCurrentViewId() === 'extensions') {
+            renderExtensions('all', e.target.value);
+        }
     });
 }
 
 // --- Actions ---
 async function toggleExtension(id, enabled) {
-    await chrome.runtime.sendMessage({ action: 'toggleExt', id, enabled });
+    await sendRuntimeMessage({ action: 'toggleExt', id, enabled });
     await refreshData();
 }
 
 // --- Rule Modal & Regex Logic ---
 const modal = document.getElementById('ruleModal');
 let tempRules = []; // Temporary rules for the currently open modal
-const RULE_PRESETS = [
+let rulePresets = null;
+let presetRulesInitialized = false;
+
+function getRulePresets() {
+    if (rulePresets) return rulePresets;
+
+    rulePresets = [
     {
         id: 'youtube',
         name: 'YouTube',
@@ -338,7 +443,10 @@ const RULE_PRESETS = [
         name: 'Zoom',
         rules: ['/^https?:\\/\\/(?:[a-z0-9-]+\\.)*zoom\\.us(?::\\d+)?(?:[/?#]|$)/i']
     }
-];
+    ];
+
+    return rulePresets;
+}
 
 function isRegexRule(rule) {
     return typeof rule === 'string' && rule.startsWith('/') && rule.lastIndexOf('/') > 0;
@@ -352,40 +460,45 @@ function validateRegexRule(rule) {
 
 function addRulesToModal(newRules) {
     let added = 0;
-    newRules.forEach(rule => {
+    for (const rule of newRules) {
         if (!tempRules.includes(rule)) {
             tempRules.push(rule);
             added += 1;
         }
-    });
+    }
     renderModalRules();
     return added;
 }
 
 function setupPresetRules() {
+    if (presetRulesInitialized) return;
     const select = document.getElementById('presetRuleSelect');
     if (!select) return;
 
-    RULE_PRESETS.forEach(preset => {
+    const fragment = document.createDocumentFragment();
+    for (const preset of getRulePresets()) {
         const option = document.createElement('option');
         option.value = preset.id;
         option.textContent = preset.name;
-        select.appendChild(option);
-    });
+        fragment.appendChild(option);
+    }
+    select.appendChild(fragment);
+    presetRulesInitialized = true;
 }
 
 function setupModal() {
     document.getElementById('closeModal').addEventListener('click', closeModal);
     document.getElementById('cancelModal').addEventListener('click', closeModal);
-    setupPresetRules();
 
     document.getElementById('addPresetRuleBtn').addEventListener('click', () => {
         const select = document.getElementById('presetRuleSelect');
-        const preset = RULE_PRESETS.find(item => item.id === select.value);
+        const preset = getRulePresets().find(item => item.id === select.value);
         if (!preset) return;
 
         try {
-            preset.rules.forEach(validateRegexRule);
+            for (const rule of preset.rules) {
+                validateRegexRule(rule);
+            }
         } catch (e) {
             alert(`Preset Regex Invalid: ${preset.name}`);
             return;
@@ -430,10 +543,23 @@ function setupModal() {
                 delete rules[currentEditId]; // Empty rules = Remove management
             }
             
-            await chrome.runtime.sendMessage({ action: 'saveRules', rules });
+            await sendRuntimeMessage({ action: 'saveRules', rules });
             closeModal();
             refreshData();
         }
+    });
+}
+
+function setupModalRuleActions() {
+    const list = document.getElementById('modalRuleList');
+    if (!list) return;
+
+    list.addEventListener('click', (e) => {
+        const removeBtn = e.target.closest('.remove-rule-btn');
+        if (!removeBtn) return;
+
+        tempRules.splice(Number(removeBtn.dataset.idx), 1);
+        renderModalRules();
     });
 }
 
@@ -443,58 +569,65 @@ function renderRulesView() {
     if (!tableBody) return;
     tableBody.innerHTML = '';
 
-    const managedIds = Object.keys(rules);
-    if (managedIds.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:40px; color:#999;">暂无自动化规则</td></tr>';
-        return;
-    }
+    const fragment = document.createDocumentFragment();
+    let hasRules = false;
 
-    managedIds.forEach(id => {
+    for (const id in rules) {
         const ext = extensions.find(e => e.id === id);
-        if (!ext) return;
+        if (!ext) continue;
 
+        hasRules = true;
         const tr = document.createElement('tr');
-        const ruleTags = rules[id].map(r => {
-            const isRegex = isRegexRule(r);
-            return `<span class="tag ${isRegex ? 'regex' : 'domain'}">${r}</span>`;
-        }).join('');
+        let ruleTags = '';
+        for (const rule of rules[id]) {
+            const isRegex = isRegexRule(rule);
+            ruleTags += `<span class="tag ${isRegex ? 'regex' : 'domain'}">${rule}</span>`;
+        }
 
         tr.innerHTML = `
             <td>
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <img src="${ext.icons ? ext.icons[0].url : 'icon16.png'}" style="width:24px; height:24px; border-radius:4px;">
-                    <strong style="color:var(--text-primary)">${ext.name}</strong>
+                <div class="ext-cell">
+                    <img src="${ext.iconUrl || 'icon16.png'}" alt="">
+                    <strong>${ext.name}</strong>
                 </div>
             </td>
             <td><div class="rule-tags">${ruleTags}</div></td>
             <td>
-                <div style="display:flex; gap:8px;">
+                <div class="row-actions">
                     <button class="btn-sm btn-rule" data-id="${id}">编辑</button>
-                    <button class="btn-sm remove-rule-btn" style="color:var(--danger); border-color:rgba(246,78,96,0.2);">移除</button>
+                    <button class="btn-sm remove-rule-btn" data-id="${id}">移除</button>
                 </div>
             </td>
         `;
-        
-        tr.querySelector('.btn-rule').addEventListener('click', () => openRuleEditor(id));
-        tr.querySelector('.remove-rule-btn').addEventListener('click', async () => {
-            delete rules[id];
-            await chrome.runtime.sendMessage({ action: 'saveRules', rules });
-            refreshData();
-        });
-        tableBody.appendChild(tr);
-    });
+        fragment.appendChild(tr);
+    }
+
+    if (!hasRules) {
+        tableBody.innerHTML = '<tr><td colspan="3"><div class="empty-message">暂无自动化规则</div></td></tr>';
+        return;
+    }
+
+    tableBody.appendChild(fragment);
 }
 
-// --- Logs View ---
-function setupLogActions() {
-    const clearBtn = document.getElementById('clearLogs');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', async () => {
-            await chrome.runtime.sendMessage({ action: 'clearLogs' });
-            renderFullLogs();
-            renderLogsPreview();
-        });
-    }
+function setupRulesTableActions() {
+    const tableBody = document.getElementById('rulesTableBody');
+    if (!tableBody) return;
+
+    tableBody.addEventListener('click', async (e) => {
+        const ruleBtn = e.target.closest('.btn-rule');
+        if (ruleBtn) {
+            openRuleEditor(ruleBtn.dataset.id);
+            return;
+        }
+
+        const removeBtn = e.target.closest('.remove-rule-btn');
+        if (removeBtn) {
+            delete rules[removeBtn.dataset.id];
+            await sendRuntimeMessage({ action: 'saveRules', rules });
+            refreshData();
+        }
+    });
 }
 
 // --- Rule Import/Export ---
@@ -503,7 +636,7 @@ function setupRuleActions() {
     if (importBtn) {
         importBtn.addEventListener('click', async () => {
             if (confirm('导入预设规则将完全覆盖当前规则，确定要继续吗？')) {
-                const response = await chrome.runtime.sendMessage({ action: 'importPresetRules' });
+                const response = await sendRuntimeMessage({ action: 'importPresetRules' });
                 if (response.success) {
                     alert('预设规则导入成功！');
                     await refreshData();
@@ -517,7 +650,7 @@ function setupRuleActions() {
     const exportBtn = document.getElementById('exportRulesBtn');
     if (exportBtn) {
         exportBtn.addEventListener('click', async () => {
-            const response = await chrome.runtime.sendMessage({ action: 'exportRules' });
+            const response = await sendRuntimeMessage({ action: 'exportRules' });
             if (response.success) {
                 const dataStr = JSON.stringify(response.data, null, 2);
                 const blob = new Blob([dataStr], { type: 'application/json' });
@@ -534,64 +667,13 @@ function setupRuleActions() {
     }
 }
 
-async function renderLogsPreview() {
-    const container = document.getElementById('activityPreview');
-    if (!container) return;
-    
-    const response = await chrome.runtime.sendMessage({ action: 'getLogs' });
-    const logs = response.logs || [];
-    
-    container.innerHTML = '';
-    if (logs.length === 0) {
-        container.innerHTML = '<div style="color:#999; padding:20px;">暂无运行记录</div>';
-        return;
-    }
-
-    logs.slice(0, 5).forEach(log => {
-        const item = document.createElement('div');
-        item.className = 'log-item';
-        item.innerHTML = `
-            <span class="time">${log.time}</span>
-            <span class="action ${log.action}">${log.action}</span>
-            <span class="target">${log.target}</span>
-            <span class="reason">${log.details}</span>
-        `;
-        container.appendChild(item);
-    });
-}
-
-async function renderFullLogs() {
-    const list = document.getElementById('fullLogList');
-    if (!list) return;
-
-    const response = await chrome.runtime.sendMessage({ action: 'getLogs' });
-    const logs = response.logs || [];
-
-    list.innerHTML = '';
-    if (logs.length === 0) {
-        list.innerHTML = '<div style="text-align:center; padding:100px; color:#565674;">日志库为空</div>';
-        return;
-    }
-
-    logs.forEach(log => {
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        entry.innerHTML = `
-            <div class="log-time">${log.time}</div>
-            <div class="log-action ${log.action}">${log.action}</div>
-            <div class="log-target">${log.target}</div>
-            <div class="log-details">${log.details}</div>
-        `;
-        list.appendChild(entry);
-    });
-}
-
 function openRuleEditor(extId) {
+    setupPresetRules();
     currentEditId = extId;
     const ext = extensions.find(e => e.id === extId);
     tempRules = rules[extId] ? [...rules[extId]] : [];
     
-    document.getElementById('modalTitle').textContent = `Config: ${ext.name}`;
+    document.getElementById('modalTitle').textContent = `配置规则：${ext.name}`;
     renderModalRules();
     
     modal.classList.remove('hidden');
@@ -602,11 +684,13 @@ function renderModalRules() {
     list.innerHTML = '';
     
     if (tempRules.length === 0) {
-        list.innerHTML = '<div style="color:#999; text-align:center; padding:20px;">No rules configured. Extension runs manually.</div>';
+        list.innerHTML = '<div class="empty-message">未配置规则。该扩展将保持手动管理。</div>';
         return;
     }
 
-    tempRules.forEach((rule, index) => {
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < tempRules.length; index += 1) {
+        const rule = tempRules[index];
         const isRegex = isRegexRule(rule);
         const item = document.createElement('div');
         item.className = 'rule-item';
@@ -616,16 +700,12 @@ function renderModalRules() {
                 <span class="tag ${isRegex ? 'regex' : 'domain'}">${isRegex ? 'REGEX' : 'DOMAIN'}</span>
                 <code>${isRegex ? rule : rule}</code>
             </div>
-            <button class="btn-sm" style="border:none; color:#f64e60" data-idx="${index}">×</button>
+            <button class="btn-sm remove-rule-btn" data-idx="${index}">×</button>
         `;
-        
-        item.querySelector('button').addEventListener('click', () => {
-            tempRules.splice(index, 1);
-            renderModalRules();
-        });
-        
-        list.appendChild(item);
-    });
+        fragment.appendChild(item);
+    }
+
+    list.appendChild(fragment);
 }
 
 function closeModal() {

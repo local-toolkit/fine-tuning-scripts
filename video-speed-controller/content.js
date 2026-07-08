@@ -1,331 +1,77 @@
-const TAG = '[QuickSpeed]';
-const DEFAULT_SPEED = 1.5;
-const OVERLAY_CLASS = 'quick-speed-overlay';
+if (!globalThis.__quickSpeedLoaded) {
+  globalThis.__quickSpeedLoaded = true;
 
-const OVERLAY_STYLE = `
-.${OVERLAY_CLASS} {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  background-color: rgba(0, 0, 0, 0.75);
-  color: #fff;
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  font-weight: 600;
-  z-index: 2147483647; 
-  pointer-events: none;
-  transition: opacity 0.4s ease;
-  opacity: 0;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  min-width: 50px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  border: 1px solid rgba(255,255,255,0.1);
-}
-.${OVERLAY_CLASS}.visible {
-  opacity: 1;
-}
-.${OVERLAY_CLASS}.fading {
-  opacity: 0.2;
-}
-`;
+  const DEFAULT_SPEED = 1.5;
+  const DEFAULT_STEP = 0.25;
+  let defaultSpeed = DEFAULT_SPEED;
+  let step = DEFAULT_STEP;
+  let videos = [];
 
-let settings = {
-  defaultSpeed: DEFAULT_SPEED,
-  step: 0.25
-};
-
-const allVideos = new Set();
-const rootsWithStyles = new WeakSet();
-const observedRoots = new WeakSet();
-
-// Initialize settings from storage
-chrome.storage.sync.get(['defaultSpeed', 'step'], (result) => {
-  if (result.defaultSpeed) settings.defaultSpeed = parseFloat(result.defaultSpeed);
-  if (result.step) settings.step = parseFloat(result.step);
-  scanForVideos();
-});
-
-// Watch for storage changes
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.defaultSpeed) settings.defaultSpeed = parseFloat(changes.defaultSpeed.newValue);
-  if (changes.step) settings.step = parseFloat(changes.step.newValue);
-});
-
-
-// YouTube SPA navigation support
-window.addEventListener('yt-navigate-finish', () => {
-    console.log(TAG, 'YouTube navigation finished');
-    // Give it a moment to render the player
-    setTimeout(scanForVideos, 500);
-    setTimeout(scanForVideos, 2000);
-});
-
-// Generic SPA navigation support
-window.addEventListener('popstate', () => {
-    setTimeout(scanForVideos, 1000);
-});
-
-// URL state tracking for generic SPA support
-let lastUrl = location.href;
-setInterval(() => {
-    if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        console.log(TAG, 'URL changed detected');
-        scanForVideos();
-        // Dynamic content might take a while
-        setTimeout(scanForVideos, 1000);
-        setTimeout(scanForVideos, 3000);
-    }
-}, 1000);
-
-
-function injectStyles(root) {
-    if (!root || rootsWithStyles.has(root)) return;
-    
-    // For document, we look for head
-    // For shadow roots, we just append
-    const style = document.createElement('style');
-    style.textContent = OVERLAY_STYLE;
-    
-    try {
-        if (root === document) {
-            (document.head || document.documentElement).appendChild(style);
-        } else {
-            root.appendChild(style);
-        }
-        rootsWithStyles.add(root);
-    } catch (e) {
-        console.warn(TAG, 'Failed to inject styles into root:', root, e);
-    }
-}
-
-
-function getOverlay(video) {
-  return video._qsOverlay;
-}
-
-function createOverlay(video) {
-  if (video._qsOverlay) {
-      const overlay = video._qsOverlay;
-      // Check if overlay is still properly attached
-      if (overlay.parentNode !== video.parentNode && video.parentNode) {
-          // Video moved? Re-attach overlay
-          const parentStyle = window.getComputedStyle(video.parentNode);
-          if (parentStyle.position === 'static') {
-              video.parentNode.style.position = 'relative';
-          }
-          video.parentNode.appendChild(overlay);
+  function collectVideos() {
+    videos = [];
+    for (const video of document.querySelectorAll('video')) {
+      if (video.isConnected) {
+        videos.push(video);
       }
-      return overlay;
+    }
+    return videos.length > 0;
   }
 
-  // Find the root (document or shadow root)
-  let root = video.getRootNode();
-  injectStyles(root);
-
-  const overlay = document.createElement('div');
-  overlay.className = OVERLAY_CLASS;
-  overlay.textContent = `${video.playbackRate.toFixed(1)}x`;
-  
-  if (video.parentNode) {
-      const parentStyle = window.getComputedStyle(video.parentNode);
-      if (parentStyle.position === 'static') {
-          video.parentNode.style.position = 'relative';
+  function applyDefaultSpeed() {
+    for (const video of videos) {
+      if (Math.abs(video.playbackRate - 1.0) < 0.1) {
+        video.playbackRate = defaultSpeed;
       }
-      video.parentNode.appendChild(overlay);
+    }
   }
-  
-  video._qsOverlay = overlay;
-  return overlay;
-}
 
-function updateOverlay(video) {
-  const overlay = getOverlay(video);
-  if (overlay) {
-      overlay.textContent = `${video.playbackRate.toFixed(1)}x`;
-      
-      // Reset classes
-      overlay.classList.remove('fading');
-      overlay.classList.add('visible');
+  function cleanupIfEmpty() {
+    let writeIndex = 0;
+    for (const video of videos) {
+      if (video.isConnected) {
+        videos[writeIndex] = video;
+        writeIndex += 1;
+      }
+    }
+    videos.length = writeIndex;
 
-      // Clear existing timeout if any
-      if (overlay._qsTimeout) clearTimeout(overlay._qsTimeout);
-      if (overlay._qsFadeTimeout) clearTimeout(overlay._qsFadeTimeout);
-
-      // 1.5 seconds later, start fading (almost transparent)
-      overlay._qsFadeTimeout = setTimeout(() => {
-          overlay.classList.remove('visible');
-          overlay.classList.add('fading');
-      }, 1500);
-
-      // 5 seconds later, hide completely to avoid any visual clutter
-      overlay._qsTimeout = setTimeout(() => {
-          overlay.classList.remove('fading');
-      }, 5000);
+    if (videos.length === 0) {
+      document.removeEventListener('keydown', handleKeydown);
+      globalThis.__quickSpeedLoaded = false;
+      return true;
+    }
+    return false;
   }
-}
 
-function removeOverlay(video) {
-    const overlay = getOverlay(video);
-    if (overlay && overlay.parentNode) {
-        overlay.parentNode.removeChild(overlay);
-    }
-    video._qsOverlay = null; // Clear reference
-}
-
-// function handleVideo(video) {
-//     // We removed the strictly "once" check to allow re-checking overlay state
-//     // if (!allVideos.has(video)) ... 
-    
-//     if (!allVideos.has(video)) {
-//         allVideos.add(video);
-//         // listeners checks...
-//     }
-//     ...
-// }
-
-function handleVideo(video) {
-    createOverlay(video); // Ensure overlay exists and is attached
-
-    if (allVideos.has(video)) {
-        // Already handling this video.
-        // Do NOT call updateOverlay() here, as it resets the fade timer
-        // and causes flickering during periodic scans.
-        return;
-    }
-    
-    allVideos.add(video);
-
-    // Enforce default speed if near 1.0 (assuming unmodified)
-    if (Math.abs(video.playbackRate - 1.0) < 0.1) {
-        video.playbackRate = settings.defaultSpeed;
-    }
-    updateOverlay(video);
-
-    video.addEventListener('ratechange', () => {
-        updateOverlay(video);
-    });
-    
-    video.addEventListener('emptied', () => {
-         // Video source cleared
-         updateOverlay(video);
-    });
-}
-
-function handleRemovedVideo(video) {
-    if (allVideos.has(video)) {
-        removeOverlay(video);
-        allVideos.delete(video);
-    }
-}
-
-// Deep traversal for Shadow DOM
-function observeRoot(root) {
-    if (!root || observedRoots.has(root)) return;
-    observedRoots.add(root);
-    // Reuse the same observer instance (defined below)
-    // Note: observer variable is hoisted but in TDZ until initialization,
-    // so ensure this is called after observer is defined.
-    if (typeof observer !== 'undefined') {
-        observer.observe(root, { childList: true, subtree: true });
-    }
-}
-
-function scanRoot(root) {
-    if (!root) return;
-    
-    // 0. Observe mutations in this root
-    observeRoot(root);
-
-    // 0.5. If the root itself has a shadow root (e.g. we scanned a custom element), scan that too
-    if (root.shadowRoot) {
-        scanRoot(root.shadowRoot);
-    }
-
-    // 1. Check current root for videos
-    const videos = root.querySelectorAll ? root.querySelectorAll('video') : [];
-    videos.forEach(handleVideo);
-
-    // 2. Check all children for shadow roots
-    const allNodes = root.querySelectorAll ? root.querySelectorAll('*') : [];
-    allNodes.forEach(node => {
-        if (node.shadowRoot) {
-            scanRoot(node.shadowRoot);
-        }
-    });
-}
-
-function scanForVideos() {
-    scanRoot(document);
-}
-
-// MutationObserver for adding/removing videos
-const observer = new MutationObserver((mutations) => {
-    mutations.forEach(mutation => {
-        // Handle added nodes
-        mutation.addedNodes.forEach(node => {
-            if (node.nodeName === 'VIDEO') {
-                handleVideo(node);
-            } else if (node.querySelectorAll) {
-                // Check if node itself has shadow root? 
-                scanRoot(node); 
-            }
-        });
-
-        // Handle removed nodes
-        mutation.removedNodes.forEach(node => {
-            if (node.nodeName === 'VIDEO') {
-                handleRemovedVideo(node);
-            } else if (node.querySelectorAll) {
-                const videos = node.querySelectorAll('video');
-                videos.forEach(handleRemovedVideo);
-            }
-        });
-    });
-});
-
-
-// Initial observation is handled by scanForVideos -> scanRoot -> observeRoot
-
-
-// Keyboard Listeners
-document.addEventListener('keydown', (e) => {
-    // Ignore inputs
+  function handleKeydown(e) {
     const target = e.target;
-    const isInput = target.tagName === 'INPUT' || 
-                    target.tagName === 'TEXTAREA' || 
-                    target.isContentEditable;
-    if (isInput) return;
-    
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
     const key = e.key.toLowerCase();
-    
-    if (key === 's' || key === 'd' || key === 'r') {
-        if (allVideos.size === 0) return;
-        
-        allVideos.forEach(video => {
-            let newSpeed = video.playbackRate;
-            if (key === 's') {
-                newSpeed = Math.max(0.1, newSpeed - settings.step);
-            } else if (key === 'd') {
-                newSpeed = Math.min(16.0, newSpeed + settings.step);
-            } else if (key === 'r') {
-                newSpeed = 1.0;
-            }
-            video.playbackRate = newSpeed;
-        });
+    if (key !== 's' && key !== 'd' && key !== 'r') return;
+
+    if (cleanupIfEmpty()) return;
+
+    for (const video of videos) {
+      if (key === 's') {
+        video.playbackRate = Math.max(0.1, video.playbackRate - step);
+      } else if (key === 'd') {
+        video.playbackRate = Math.min(16.0, video.playbackRate + step);
+      } else {
+        video.playbackRate = 1.0;
+      }
     }
-});
+  }
 
-// Periodic scan to catch anything missed (e.g. rapid DOM changes or deep weirdness)
-// Also ensures observer is attached to document if missed
-setInterval(scanForVideos, 2000);
-
-// Run initial scan
-scanForVideos();
+  if (!collectVideos()) {
+    globalThis.__quickSpeedLoaded = false;
+  } else {
+    chrome.storage.sync.get(['defaultSpeed', 'step'], result => {
+      if (result.defaultSpeed !== undefined) defaultSpeed = parseFloat(result.defaultSpeed);
+      if (result.step !== undefined) step = parseFloat(result.step);
+      applyDefaultSpeed();
+      document.addEventListener('keydown', handleKeydown);
+    });
+  }
+}

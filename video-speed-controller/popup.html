@@ -59,6 +59,24 @@
             margin-top: 6px;
         }
 
+        .activate-btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            background: #8ab4f8;
+            color: #202124;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 18px;
+        }
+
+        .activate-btn:disabled {
+            cursor: default;
+            opacity: 0.65;
+        }
+
         .shortcuts {
             background: #303134;
             padding: 12px;
@@ -93,6 +111,9 @@
     <h2>
         <span>QuickSpeed</span>
     </h2>
+
+    <button id="activateTab" class="activate-btn">Enable on this tab</button>
+    <div class="hint" id="activateStatus"></div>
 
     <div class="form-group">
         <label for="defaultSpeed">Default Speed</label>

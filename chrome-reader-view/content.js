@@ -1,4 +1,9 @@
 (function() {
+  if (window.__dailyReaderViewLoaded) {
+    return;
+  }
+  window.__dailyReaderViewLoaded = true;
+
   let readerActive = false;
   let overlay = null;
   let onKeydown = null;
@@ -53,9 +58,7 @@
       if (featuredImage && article.content.includes(featuredImage)) {
         featuredImage = null; 
       }
-    } catch (e) {
-      console.warn("Featured image extraction failed", e);
-    }
+    } catch (e) {}
 
     readerActive = true;
     overlay = document.createElement('div');

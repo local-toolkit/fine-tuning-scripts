@@ -1,44 +1,17 @@
 // Core Automation Engine - Commercial Grade (v2)
 
-// Preset Rules Configuration
-const PRESET_RULES = {
-  version: "1.0.0",
-  description: "预设规则配置文件 - 用于首次安装时自动加载",
-  lastUpdated: "2026-02-08",
-  whitelist: [
-    "jcehmiopmjjbdakjgjjlfjipbjfcablj",
-    "dhdgffkkebhmkfjojejmpbldmpobfkfo"
-  ],
-  rules: {
-    "cmedhionkhpnakcndndgjdbohmhepckk": ["/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:youtube\\.com|youtube-nocookie\\.com|youtu\\.be)(?::\\d+)?(?:[/?#]|$)/i"],
-    "pjebbdjhagepdcagkacbpccagmnjomoj": ["chrome://bookmarks/"],
-    "cieikaeocafmceoapfogpffaalkncpkc": ["github.com"],
-    "ghbmnnjooekpmoecnnnilnnbdlolhkhi": ["docs.google.com"],
-    "ldipcbpaocekfooobnbcddclnhejkcpn": ["scholar.google.com"],
-    "fkepacicchenbjecpbpbclokcabebhah": ["bookmarks.icloud.com"],
-    "pejdijmoenmkgeppbflobdenhhabjlaj": ["*"],
-    "bapgbgfcjpeakbjcidibdcndbmdngkdf": ["youtube.com", "bilibili.com", "youku.com", "v.qq.com", "iqiyi.com", "tv.sohu.com", "v.163.com"],
-    "jgddbbpaobnapjkdalbdmpognmepgpog": ["/^https?:\\/\\/.+/"]
-  },
-  aliases: {
-    "cmedhionkhpnakcndndgjdbohmhepckk": [
-      "adblock for youtube",
-      "ad block for youtube",
-      "adblocker for youtube",
-      "ad blocker for youtube",
-      "adblock youtube",
-      "youtube adblock",
-      "youtube ad blocker"
-    ]
-  }
-};
-
 // Configuration
 // rules structure: { "extensionId": ["google.com", "/^https:\/\/.*\.github\.com/"] }
 let rules = {};
 // whitelist: Extensions that should NEVER be auto-disabled
 let whitelist = new Set();
 let selfId = chrome.runtime.id;
+let rulesLoaded = false;
+let presetRulesConfig = null;
+const CURRENT_PRESET_VERSION = "1.0.0";
+const ALIASED_PRESET_IDS = new Set([
+    "cmedhionkhpnakcndndgjdbohmhepckk"
+]);
 const ALWAYS_ON_EXTENSION_IDS = new Set([
     "dhdgffkkebhmkfjojejmpbldmpobfkfo" // Tampermonkey: permission-sensitive; do not auto-disable/enable.
 ]);
@@ -98,10 +71,30 @@ function extensionMatchesAlias(extensionName, alias) {
     return normalizedName === normalizedAlias || normalizedName.includes(normalizedAlias);
 }
 
-function getManagedPresetExtensionIds(extensions) {
-    const managedPresetIds = new Set(Object.keys(PRESET_RULES.aliases || {}));
+function setToArray(set) {
+    const items = [];
+    for (const item of set) {
+        items.push(item);
+    }
+    return items;
+}
 
-    Object.entries(PRESET_RULES.aliases || {}).forEach(([presetId, aliases]) => {
+async function getPresetRulesConfig() {
+    if (presetRulesConfig) {
+        return presetRulesConfig;
+    }
+
+    const response = await fetch(chrome.runtime.getURL('preset-rules.json'));
+    presetRulesConfig = await response.json();
+    return presetRulesConfig;
+}
+
+function getManagedPresetExtensionIds(extensions, presetRules) {
+    const aliasesByPresetId = presetRules.aliases || {};
+    const managedPresetIds = new Set(Object.keys(aliasesByPresetId));
+
+    for (const presetId in aliasesByPresetId) {
+        const aliases = aliasesByPresetId[presetId];
         const matchedExtension = extensions.find(ext =>
             ext.id === presetId || aliases.some(alias => extensionMatchesAlias(ext.name, alias))
         );
@@ -109,51 +102,70 @@ function getManagedPresetExtensionIds(extensions) {
         if (matchedExtension) {
             managedPresetIds.add(matchedExtension.id);
         }
-    });
+    }
 
     return managedPresetIds;
 }
 
 async function resolvePresetRules() {
+    const presetRules = await getPresetRulesConfig();
     const extensions = await chrome.management.getAll();
-    const installedById = new Map(extensions.map(ext => [ext.id, ext]));
+    const installedById = new Map();
     const resolvedRules = {};
 
-    Object.entries(PRESET_RULES.rules).forEach(([presetId, presetRules]) => {
-        const aliases = PRESET_RULES.aliases?.[presetId] || [];
+    for (const ext of extensions) {
+        installedById.set(ext.id, ext);
+    }
+
+    for (const presetId in presetRules.rules) {
+        const presetRuleList = presetRules.rules[presetId];
+        const aliases = presetRules.aliases?.[presetId] || [];
         const matchedExtension = installedById.get(presetId) ||
             extensions.find(ext => aliases.some(alias => extensionMatchesAlias(ext.name, alias)));
 
-        resolvedRules[matchedExtension ? matchedExtension.id : presetId] = presetRules;
-    });
+        resolvedRules[matchedExtension ? matchedExtension.id : presetId] = presetRuleList;
+    }
 
     return resolvedRules;
 }
 
 async function migratePresetRuleAliases() {
+    const presetRules = await getPresetRulesConfig();
     const extensions = await chrome.management.getAll();
-    const installedById = new Map(extensions.map(ext => [ext.id, ext]));
+    const installedById = new Map();
     let changed = false;
 
-    Object.keys(PRESET_RULES.aliases || {}).forEach(presetId => {
+    for (const ext of extensions) {
+        installedById.set(ext.id, ext);
+    }
+
+    for (const presetId in presetRules.aliases || {}) {
         if (!rules[presetId] || installedById.has(presetId)) {
-            return;
+            continue;
         }
 
-        const aliases = PRESET_RULES.aliases[presetId];
+        const aliases = presetRules.aliases[presetId];
         const matchedExtension = extensions.find(ext =>
             aliases.some(alias => extensionMatchesAlias(ext.name, alias))
         );
 
         if (!matchedExtension) {
-            return;
+            continue;
         }
 
-        const mergedRules = new Set([...(rules[matchedExtension.id] || []), ...rules[presetId]]);
-        rules[matchedExtension.id] = Array.from(mergedRules);
+        const mergedRules = [];
+        for (const rule of rules[matchedExtension.id] || []) {
+            mergedRules.push(rule);
+        }
+        for (const rule of rules[presetId]) {
+            if (!mergedRules.includes(rule)) {
+                mergedRules.push(rule);
+            }
+        }
+        rules[matchedExtension.id] = mergedRules;
         delete rules[presetId];
         changed = true;
-    });
+    }
 
     if (changed) {
         await chrome.storage.local.set({ rules });
@@ -161,21 +173,23 @@ async function migratePresetRuleAliases() {
 }
 
 async function ensureAliasedPresetRules() {
+    const presetRules = await getPresetRulesConfig();
     const extensions = await chrome.management.getAll();
     let changed = false;
 
-    Object.entries(PRESET_RULES.aliases || {}).forEach(([presetId, aliases]) => {
+    for (const presetId in presetRules.aliases || {}) {
+        const aliases = presetRules.aliases[presetId];
         const matchedExtension = extensions.find(ext =>
             ext.id === presetId || aliases.some(alias => extensionMatchesAlias(ext.name, alias))
         );
 
         if (!matchedExtension) {
-            return;
+            continue;
         }
 
-        const presetRules = PRESET_RULES.rules[presetId] || [];
+        const presetRuleList = presetRules.rules[presetId] || [];
         const existingRules = rules[matchedExtension.id] || [];
-        const nextRules = [...presetRules];
+        const nextRules = [...presetRuleList];
 
         if (JSON.stringify(existingRules) !== JSON.stringify(nextRules)) {
             rules[matchedExtension.id] = nextRules;
@@ -186,7 +200,7 @@ async function ensureAliasedPresetRules() {
             delete rules[presetId];
             changed = true;
         }
-    });
+    }
 
     if (changed) {
         await chrome.storage.local.set({ rules });
@@ -194,13 +208,20 @@ async function ensureAliasedPresetRules() {
 }
 
 async function migrateManagedPresetWhitelist() {
+    const presetRules = await getPresetRulesConfig();
     const extensions = await chrome.management.getAll();
-    const managedPresetIds = getManagedPresetExtensionIds(extensions);
-    const nextWhitelist = Array.from(whitelist).filter(id => !managedPresetIds.has(id));
+    const managedPresetIds = getManagedPresetExtensionIds(extensions, presetRules);
+    const nextWhitelist = [];
+
+    for (const id of whitelist) {
+        if (!managedPresetIds.has(id)) {
+            nextWhitelist.push(id);
+        }
+    }
 
     if (nextWhitelist.length !== whitelist.size) {
         whitelist = new Set([...nextWhitelist, selfId]);
-        await chrome.storage.local.set({ whitelist: Array.from(whitelist) });
+        await chrome.storage.local.set({ whitelist: setToArray(whitelist) });
     }
 }
 
@@ -208,7 +229,7 @@ async function migrateAlwaysOnExtensions() {
     let changedRules = false;
     let changedWhitelist = false;
 
-    ALWAYS_ON_EXTENSION_IDS.forEach(id => {
+    for (const id of ALWAYS_ON_EXTENSION_IDS) {
         if (rules[id]) {
             delete rules[id];
             changedRules = true;
@@ -218,39 +239,29 @@ async function migrateAlwaysOnExtensions() {
             whitelist.add(id);
             changedWhitelist = true;
         }
-    });
+    }
 
     if (changedRules || changedWhitelist) {
         await chrome.storage.local.set({
             rules,
-            whitelist: Array.from(whitelist)
+            whitelist: setToArray(whitelist)
         });
     }
 }
 
-// Initialize
-function ensurePeriodicCheckAlarm() {
-    chrome.alarms.create('periodic-state-check', { periodInMinutes: 1 });
-}
-
-ensurePeriodicCheckAlarm();
-
 chrome.runtime.onInstalled.addListener(async () => {
     await loadRules();
     whitelist.add(selfId);
-    ensurePeriodicCheckAlarm();
-    console.log('Smart Extension Manager Initialized');
     checkTabsAndApplyState();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-    ensurePeriodicCheckAlarm();
     checkTabsAndApplyState();
 });
 
 // Load rules from storage
 async function loadRules() {
-    const data = await chrome.storage.local.get(['rules', 'whitelist', 'presetLoaded']);
+    const data = await chrome.storage.local.get(['rules', 'whitelist', 'presetLoaded', 'presetVersion']);
     rules = data.rules || {};
     const storedWhitelist = data.whitelist || [];
     whitelist = new Set([...storedWhitelist, selfId]);
@@ -260,125 +271,103 @@ async function loadRules() {
     if (!data.presetLoaded && Object.keys(rules).length === 0) {
         await loadPresetRules();
     } else {
-        await migratePresetRuleAliases();
-        await ensureAliasedPresetRules();
-        await migrateManagedPresetWhitelist();
+        const needsPresetMigration =
+            data.presetVersion !== CURRENT_PRESET_VERSION ||
+            Object.keys(rules).some(id => ALIASED_PRESET_IDS.has(id)) ||
+            storedWhitelist.some(id => ALIASED_PRESET_IDS.has(id));
+
+        if (needsPresetMigration) {
+            await migratePresetRuleAliases();
+            await ensureAliasedPresetRules();
+            await migrateManagedPresetWhitelist();
+            await chrome.storage.local.set({ presetVersion: CURRENT_PRESET_VERSION });
+        }
+
         await migrateAlwaysOnExtensions();
     }
+
+    rulesLoaded = true;
 }
 
-// Load preset rules from PRESET_RULES constant
+// Load preset rules only when needed; keep them out of the worker hot path.
 async function loadPresetRules() {
+    const presetRules = await getPresetRulesConfig();
     rules = await resolvePresetRules();
-    const whitelistWithSelf = [...PRESET_RULES.whitelist, selfId];
+    const whitelistWithSelf = [...presetRules.whitelist, selfId];
     whitelist = new Set(whitelistWithSelf);
+    rulesLoaded = true;
 
     await chrome.storage.local.set({
         rules: rules,
         whitelist: whitelistWithSelf,
         presetLoaded: true,
-        presetVersion: PRESET_RULES.version
+        presetVersion: CURRENT_PRESET_VERSION
     });
 
-    console.log('Preset rules loaded:', PRESET_RULES.description);
-}
-
-// Event Listeners: Monitor Tab Activity
-const tabUrlCache = new Map();
-
-function rememberTabUrl(tabId, tab) {
-    const url = tab?.pendingUrl || tab?.url;
-    if (url) {
-        tabUrlCache.set(tabId, url);
-    }
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.url || tab?.url || tab?.pendingUrl) {
-        rememberTabUrl(tabId, tab);
-    }
-
-    if (changeInfo.status === 'complete' || changeInfo.url) {
-        checkTabsAndApplyState();
+    if (changeInfo.url) {
+        scheduleStateCheck();
     }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-    tabUrlCache.delete(tabId);
-    checkTabsAndApplyState();
-    setTimeout(checkTabsAndApplyState, 1000);
+chrome.tabs.onRemoved.addListener(() => {
+    scheduleStateCheck();
 });
 
-chrome.tabs.onActivated.addListener((activeInfo) => {
-    chrome.tabs.get(activeInfo.tabId).then(tab => {
-        rememberTabUrl(activeInfo.tabId, tab);
-        checkTabsAndApplyState();
-    }).catch(() => {
-        checkTabsAndApplyState();
-    });
+chrome.tabs.onReplaced.addListener(() => {
+    scheduleStateCheck();
 });
-
-chrome.tabs.onCreated.addListener((tab) => {
-    rememberTabUrl(tab.id, tab);
-    checkTabsAndApplyState();
-});
-
-chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
-    tabUrlCache.delete(removedTabId);
-    chrome.tabs.get(addedTabId).then(tab => {
-        rememberTabUrl(addedTabId, tab);
-        checkTabsAndApplyState();
-    }).catch(() => {
-        checkTabsAndApplyState();
-    });
-});
-
-chrome.windows.onRemoved.addListener(() => {
-    checkTabsAndApplyState();
-    setTimeout(checkTabsAndApplyState, 1000);
-});
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name === 'periodic-state-check') {
-        checkTabsAndApplyState();
-    }
-});
-
-// --- Logging System ---
-async function logAction(action, target, details) {
-    const logEntry = {
-        time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-        action,
-        target,
-        details,
-        timestamp: Date.now()
-    };
-    
-    const data = await chrome.storage.local.get(['logs']);
-    const logs = data.logs || [];
-    logs.unshift(logEntry);
-    
-    // Keep only last 100 logs
-    const trimmedLogs = logs.slice(0, 100);
-    await chrome.storage.local.set({ logs: trimmedLogs });
-}
 
 // Main Logic: The Decision Engine
 const manualEnableRequired = new Set();
+let manualEnableRequiredLoaded = false;
 let checkInProgress = false;
 let checkQueued = false;
+let checkTimer = null;
 
 async function loadManualEnableRequired() {
+    if (manualEnableRequiredLoaded) return;
+
     const data = await chrome.storage.local.get(['manualEnableRequired']);
     manualEnableRequired.clear();
-    (data.manualEnableRequired || []).forEach(id => manualEnableRequired.add(id));
+    for (const id of data.manualEnableRequired || []) {
+        manualEnableRequired.add(id);
+    }
+    manualEnableRequiredLoaded = true;
 }
 
 async function saveManualEnableRequired() {
-    await chrome.storage.local.set({ manualEnableRequired: Array.from(manualEnableRequired) });
+    manualEnableRequiredLoaded = true;
+    await chrome.storage.local.set({ manualEnableRequired: setToArray(manualEnableRequired) });
+}
+
+async function getExtensionById(id) {
+    try {
+        return await chrome.management.get(id);
+    } catch (error) {
+        return null;
+    }
+}
+
+function toDashboardExtension(ext) {
+    const icons = ext.icons || [];
+    const icon = icons.length > 0 ? icons[icons.length - 1].url : 'icon48.png';
+    return {
+        id: ext.id,
+        name: ext.name,
+        enabled: ext.enabled,
+        iconUrl: icon
+    };
 }
 
 function checkTabsAndApplyState() {
+    if (checkTimer) {
+        clearTimeout(checkTimer);
+        checkTimer = null;
+    }
+
     if (checkInProgress) {
         checkQueued = true;
         return;
@@ -387,145 +376,145 @@ function checkTabsAndApplyState() {
     performCheck();
 }
 
+function scheduleStateCheck(delay = 250) {
+    if (checkTimer) {
+        clearTimeout(checkTimer);
+    }
+
+    checkTimer = setTimeout(() => {
+        checkTimer = null;
+        checkTabsAndApplyState();
+    }, delay);
+}
+
 async function performCheck() {
     checkInProgress = true;
     try {
+        if (!rulesLoaded) {
+            await loadRules();
+        }
+
+        const managedExtensionIds = [];
+        for (const id in rules) {
+            if (id !== selfId && Array.isArray(rules[id]) && rules[id].length > 0) {
+                managedExtensionIds.push(id);
+            }
+        }
+
+        if (managedExtensionIds.length === 0) {
+            return;
+        }
+
         await loadManualEnableRequired();
-        await loadRules(); 
         
         // 1. Get all open tab URLs (Full URLs for Regex matching)
         const tabs = await chrome.tabs.query({});
-        const extensions = await chrome.management.getAll();
-        const managedPresetIds = getManagedPresetExtensionIds(extensions);
         const openUrls = [];
         
-        tabs.forEach(tab => {
+        for (const tab of tabs) {
             const url = tab.pendingUrl || tab.url;
             if (url) {
-                tabUrlCache.set(tab.id, url);
                 openUrls.push(url);
             }
-        });
+        }
 
-        tabUrlCache.forEach((url, tabId) => {
-            if (!tabs.some(tab => tab.id === tabId)) {
-                tabUrlCache.delete(tabId);
-                return;
-            }
+        // 2. Apply State
+        for (const extId of managedExtensionIds) {
+            const ext = await getExtensionById(extId);
+            if (!ext) continue;
 
-            if (!openUrls.includes(url)) {
-                openUrls.push(url);
-            }
-        });
-
-        // 2. Identify which extensions need to be ON
-        const neededExtensions = new Set();
-        
-        // Add whitelisted items
-        whitelist.forEach(id => {
-            if (!managedPresetIds.has(id)) {
-                neededExtensions.add(id);
-            }
-        });
-
-        const managedExtensionIds = Object.keys(rules);
-        const matchDetails = new Map();
-        
-        managedExtensionIds.forEach(extId => {
-            const extRules = rules[extId]; // Array of rule strings
-            if (!Array.isArray(extRules)) return;
-
-            // Check if ANY rule matches ANY open tab
-            let matchedRule = null;
-            let matchedUrl = null;
-            const isActive = extRules.some(ruleStr => {
-                try {
-                    return openUrls.some(url => {
-                        const matched = ruleMatchesUrl(ruleStr, url);
-                        if (matched) {
-                            matchedRule = ruleStr;
-                            matchedUrl = url;
-                        }
-                        return matched;
-                    });
-                } catch (e) {
-                    return false;
-                }
-            });
-
-            if (isActive) {
-                neededExtensions.add(extId);
-                matchDetails.set(extId, { rule: matchedRule, url: matchedUrl });
-                console.log(`[Rule-Match] ${extId} matched "${matchedRule}" on ${matchedUrl}`);
-            }
-        });
-        
-        // 3. Apply State
-        for (const ext of extensions) {
-            if (ext.id === selfId) continue;
             if (ext.enabled) {
                 if (manualEnableRequired.delete(ext.id)) {
                     await saveManualEnableRequired();
                 }
             }
 
-            // Only manage if it has rules (Auto Mode)
-            if (rules[ext.id] && rules[ext.id].length > 0) {
-                const matched = matchDetails.get(ext.id);
-                const shouldBeEnabled = managedPresetIds.has(ext.id)
-                    ? Boolean(matched)
-                    : neededExtensions.has(ext.id);
-
-                if (shouldBeEnabled && !ext.enabled && manualEnableRequired.has(ext.id)) {
-                    continue;
-                }
-                
-                if (ext.enabled !== shouldBeEnabled) {
-                    const actionType = shouldBeEnabled ? 'WAKE' : 'SLEEP';
-                    const reason = shouldBeEnabled && matched
-                        ? `Matched ${matched.rule} on ${matched.url}`
-                        : 'No matching active tabs';
-                    await logAction(actionType, ext.name, reason);
-                    console.log(`[Auto-Toggle] ${ext.name} -> ${shouldBeEnabled ? 'ON' : 'OFF'}`);
+            let shouldBeEnabled = whitelist.has(ext.id);
+            if (!shouldBeEnabled) {
+                for (const ruleStr of rules[ext.id]) {
                     try {
-                        await chrome.management.setEnabled(ext.id, shouldBeEnabled);
-                        await logAction(`${actionType}_DONE`, ext.name, `Extension is now ${shouldBeEnabled ? 'enabled' : 'disabled'}`);
-                    } catch (error) {
-                        if (shouldBeEnabled && /user gesture|permissions increase/i.test(error.message)) {
-                            manualEnableRequired.add(ext.id);
-                            await saveManualEnableRequired();
-                            await logAction('MANUAL_REQUIRED', ext.name, 'Chrome requires you to enable this extension manually after a permissions increase');
-                        } else {
-                            await logAction('ERROR', ext.name, `Failed to ${shouldBeEnabled ? 'enable' : 'disable'} extension: ${error.message}`);
+                        for (const url of openUrls) {
+                            if (ruleMatchesUrl(ruleStr, url)) {
+                                shouldBeEnabled = true;
+                                break;
+                            }
                         }
-                        console.error(`[Auto-Toggle] Failed to update ${ext.name}:`, error);
+                    } catch (e) {
+                    }
+
+                    if (shouldBeEnabled) {
+                        break;
+                    }
+                }
+            }
+
+            if (shouldBeEnabled && !ext.enabled && manualEnableRequired.has(ext.id)) {
+                continue;
+            }
+
+            if (ext.enabled !== shouldBeEnabled) {
+                try {
+                    await chrome.management.setEnabled(ext.id, shouldBeEnabled);
+                } catch (error) {
+                    if (shouldBeEnabled && /user gesture|permissions increase/i.test(error.message)) {
+                        manualEnableRequired.add(ext.id);
+                        await saveManualEnableRequired();
                     }
                 }
             }
         }
 
     } catch (error) {
-        console.error('Error in automation loop:', error);
     } finally {
         checkInProgress = false;
         if (checkQueued) {
             checkQueued = false;
-            checkTabsAndApplyState();
+            scheduleStateCheck();
         }
     }
 }
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+
+    if (changes.rules) {
+        rules = changes.rules.newValue || {};
+        rulesLoaded = true;
+    }
+
+    if (changes.whitelist) {
+        whitelist = new Set();
+        for (const id of changes.whitelist.newValue || []) {
+            whitelist.add(id);
+        }
+        whitelist.add(selfId);
+        rulesLoaded = true;
+    }
+
+    if (changes.manualEnableRequired) {
+        manualEnableRequired.clear();
+        for (const id of changes.manualEnableRequired.newValue || []) {
+            manualEnableRequired.add(id);
+        }
+        manualEnableRequiredLoaded = true;
+    }
+});
+
 // Interface for Dashboard
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'getData') {
-        performCheck().then(() => Promise.all([
+        Promise.all([
             chrome.management.getAll(),
-            chrome.storage.local.get(['rules', 'whitelist', 'pinned'])
-        ])).then(([extensions, data]) => {
+            chrome.storage.local.get(['rules', 'pinned'])
+        ]).then(([extensions, data]) => {
+            const dashboardExtensions = [];
+            for (const ext of extensions) {
+                dashboardExtensions.push(toDashboardExtension(ext));
+            }
+
             sendResponse({
-                extensions,
+                extensions: dashboardExtensions,
                 rules: data.rules || {},
-                whitelist: data.whitelist || [],
                 pinned: data.pinned || []
             });
         });
@@ -548,7 +537,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     else if (request.action === 'importPresetRules') {
         loadPresetRules().then(() => {
             checkTabsAndApplyState();
-            sendResponse({ success: true, rules, whitelist: Array.from(whitelist) });
+            sendResponse({ success: true, rules, whitelist: setToArray(whitelist) });
         }).catch(err => {
             sendResponse({ success: false, error: err.message });
         });
@@ -557,7 +546,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     else if (request.action === 'exportRules') {
         chrome.storage.local.get(['rules', 'whitelist', 'pinned']).then(data => {
             const exportData = {
-                version: PRESET_RULES.version,
+                version: CURRENT_PRESET_VERSION,
                 exportedAt: new Date().toISOString(),
                 rules: data.rules || {},
                 whitelist: data.whitelist || [],
@@ -569,23 +558,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     else if (request.action === 'toggleExt') {
         chrome.management.setEnabled(request.id, request.enabled);
-        const actionType = 'MANUAL';
-        chrome.management.get(request.id).then(ext => {
-            logAction(actionType, ext.name, `User ${request.enabled ? 'enabled' : 'disabled'} extension manually`);
-        });
         sendResponse({ success: true });
-    }
-    else if (request.action === 'getLogs') {
-        chrome.storage.local.get(['logs']).then(data => {
-            sendResponse({ logs: data.logs || [] });
-        });
-        return true;
-    }
-    else if (request.action === 'clearLogs') {
-        chrome.storage.local.set({ logs: [] }).then(() => {
-            sendResponse({ success: true });
-        });
-        return true;
     }
     else if (request.action === 'savePinned') {
         chrome.storage.local.set({ pinned: request.pinned }).then(() => {
