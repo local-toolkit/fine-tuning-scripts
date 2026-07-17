@@ -1,0 +1,3 @@
+# Chrome refuses unpacked extensions that contain directories beginning with "_".
+__pycache__/
+*.py[cod]
