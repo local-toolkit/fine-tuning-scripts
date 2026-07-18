@@ -12,6 +12,11 @@ const DEFAULT_SETTINGS = {
   backgroundColor: '#000000',
   backgroundOpacity: 64
 };
+const HY_MT2_MODEL = 'kaelri/hy-mt2:1.8b';
+const LEGACY_MODEL_MIGRATIONS = {
+  'hy-mt1.5:1.8b': HY_MT2_MODEL,
+  'hf.co/tencent/Hy-MT2-1.8B-GGUF:Q4_K_M': HY_MT2_MODEL
+};
 
 const $ = id => document.getElementById(id);
 let dragMode = false;
@@ -124,7 +129,12 @@ function sendRuntimeMessage(message) {
 }
 
 async function load() {
-  const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  const storedSettings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  const migratedModel = LEGACY_MODEL_MIGRATIONS[storedSettings.model] || storedSettings.model;
+  const settings = { ...storedSettings, model: migratedModel };
+  if (settings.model !== storedSettings.model) {
+    await chrome.storage.local.set({ model: settings.model });
+  }
   $('enabled').checked = settings.enabled;
   $('sourceLanguage').value = settings.sourceLanguage;
   $('serverUrl').value = DEFAULT_SETTINGS.serverUrl;

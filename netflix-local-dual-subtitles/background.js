@@ -15,6 +15,11 @@ const DEFAULT_SETTINGS = {
 const LOCAL_SERVER_URL = 'http://127.0.0.1:8765';
 const TRANSLATION_TIMEOUT_MS = 35000;
 const MAX_MODEL_NAME_LENGTH = 200;
+const HY_MT2_MODEL = 'kaelri/hy-mt2:1.8b';
+const LEGACY_MODEL_MIGRATIONS = {
+  'hy-mt1.5:1.8b': HY_MT2_MODEL,
+  'hf.co/tencent/Hy-MT2-1.8B-GGUF:Q4_K_M': HY_MT2_MODEL
+};
 
 const NATIVE_HOST = 'com.netflix.local_dual_subtitles';
 let nativePort = null;
@@ -46,9 +51,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 async function settings() {
   const stored = await chrome.storage.local.get(DEFAULT_SETTINGS);
   const modelValue = String(stored.model || '').trim();
-  const model = modelValue && modelValue.length <= MAX_MODEL_NAME_LENGTH
-    && !Array.from(modelValue).some(char => char.charCodeAt(0) < 32)
-    ? modelValue
+  const migratedModel = LEGACY_MODEL_MIGRATIONS[modelValue] || modelValue;
+  const model = migratedModel && migratedModel.length <= MAX_MODEL_NAME_LENGTH
+    && !Array.from(migratedModel).some(char => char.charCodeAt(0) < 32)
+    ? migratedModel
     : DEFAULT_SETTINGS.model;
   const updates = {};
   // The bridge is intentionally fixed to 8765. Older settings may contain a

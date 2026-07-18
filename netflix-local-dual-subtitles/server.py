@@ -66,6 +66,7 @@ HY_MT_PREFIXES = (
     "hy-mt",
     "hf.co/tencent/hy-mt",
     "tencent/hy-mt",
+    "kaelri/hy-mt",
     "ali6parmak/hy-mt",
     "sun_leaf/hy-mt",
 )
