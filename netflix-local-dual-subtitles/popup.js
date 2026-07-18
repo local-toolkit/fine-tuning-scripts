@@ -1,8 +1,9 @@
+const HY_MT2_MODEL = 'kaelri/hy-mt2:1.8b';
 const DEFAULT_SETTINGS = {
   enabled: true,
   sourceLanguage: 'auto',
   serverUrl: 'http://127.0.0.1:8765',
-  model: 'translategemma:4b',
+  model: HY_MT2_MODEL,
   overlayX: 50,
   overlayY: 76,
   fontSize: 24,
@@ -12,8 +13,11 @@ const DEFAULT_SETTINGS = {
   backgroundColor: '#000000',
   backgroundOpacity: 64
 };
-const HY_MT2_MODEL = 'kaelri/hy-mt2:1.8b';
 const LEGACY_MODEL_MIGRATIONS = {
+  'translategemma:4b': HY_MT2_MODEL,
+  'qwen3:4b': HY_MT2_MODEL,
+  'qwen3:1.7b': HY_MT2_MODEL,
+  'qwen2.5:3b': HY_MT2_MODEL,
   'hy-mt1.5:1.8b': HY_MT2_MODEL,
   'hf.co/tencent/Hy-MT2-1.8B-GGUF:Q4_K_M': HY_MT2_MODEL
 };
