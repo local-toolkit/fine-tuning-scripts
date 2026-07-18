@@ -3,11 +3,49 @@
 let brokenBookmarks = [];
 const MAX_CONCURRENT_REQUESTS = 10;
 let isScanning = false;
+let brokenPersistTimer = null;
+
+// Restore the last scan after Chrome restarts the service worker.
+// Use the callback form for compatibility with older Chrome versions.
+chrome.storage.local.get('brokenBookmarks', (result) => {
+  if (Array.isArray(result?.brokenBookmarks)) brokenBookmarks = result.brokenBookmarks;
+});
 
 // Open manager page on icon click
 chrome.action.onClicked.addListener(() => {
-  chrome.tabs.create({ url: 'manager.html' });
+  const managerUrl = chrome.runtime.getURL('manager.html');
+  const openNewManager = () => chrome.tabs.create({ url: managerUrl }, () => {
+    if (chrome.runtime.lastError) console.error('Unable to open MarkNest:', chrome.runtime.lastError.message);
+  });
+  chrome.tabs.query({ url: managerUrl }, (tabs) => {
+    if (chrome.runtime.lastError) {
+      console.error('Unable to find MarkNest tab:', chrome.runtime.lastError.message);
+      openNewManager();
+      return;
+    }
+    const existing = tabs && tabs[0];
+    if (existing?.id !== undefined) {
+      chrome.tabs.update(existing.id, { active: true });
+      return;
+    }
+    openNewManager();
+  });
 });
+
+function forgetBrokenBookmark(id) {
+  const next = brokenBookmarks.filter(bookmark => bookmark.id !== id);
+  if (next.length === brokenBookmarks.length) return;
+  brokenBookmarks = next;
+  clearTimeout(brokenPersistTimer);
+  brokenPersistTimer = setTimeout(() => {
+    brokenPersistTimer = null;
+    const pending = chrome.storage.local.set({ brokenBookmarks });
+    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+  }, 100);
+}
+
+chrome.bookmarks.onRemoved.addListener((id) => forgetBrokenBookmark(id));
+chrome.bookmarks.onChanged.addListener((id) => forgetBrokenBookmark(id));
 
 // Message handling
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -156,7 +194,10 @@ async function removeBookmarks(ids) {
 }
 
 function broadcastStatus(type, data = {}) {
-  chrome.runtime.sendMessage({ type, data }).catch(() => {
-    // Ignore error if no listeners (e.g. popup/page closed)
-  });
+  const pending = chrome.runtime.sendMessage({ type, data });
+  if (pending && typeof pending.catch === 'function') {
+    pending.catch(() => {
+      // Ignore error if no listeners (e.g. popup/page closed)
+    });
+  }
 }

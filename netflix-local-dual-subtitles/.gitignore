@@ -1,3 +1,7 @@
 # Chrome refuses unpacked extensions that contain directories beginning with "_".
 __pycache__/
 *.py[cod]
+
+# Local tooling metadata; not part of the Chrome extension.
+.codegraph
+.omo/

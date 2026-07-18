@@ -2,11 +2,23 @@
   "manifest_version": 3,
   "name": "QuickSpeed - Universal Video Speed Controller",
   "version": "1.0",
-  "description": "Control video playback speed on any website. Default 1.5x. Press 's' to slow down, 'd' to speed up.",
+  "description": "Control video playback speed on any website. Default 1.3x. Press 's' to slow down, 'd' to speed up.",
   "permissions": [
     "storage",
     "activeTab",
     "scripting"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
   ],
   "action": {
     "default_popup": "popup.html",

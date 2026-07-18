@@ -16,6 +16,13 @@ const ALWAYS_ON_EXTENSION_IDS = new Set([
     "dhdgffkkebhmkfjojejmpbldmpobfkfo" // Tampermonkey: permission-sensitive; do not auto-disable/enable.
 ]);
 
+// Local unpacked extensions receive a different ID on different machines.
+// Protect MarkNest by name so the manager can never turn the bookmark UI off.
+function isProtectedExtension(ext) {
+    const name = normalizeExtensionName(ext?.name);
+    return name.includes('marknest') || name.includes('bookmark manager');
+}
+
 function parseRegexRule(ruleStr) {
     if (typeof ruleStr !== 'string' || !ruleStr.startsWith('/')) {
         return null;
@@ -257,6 +264,8 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => {
     checkTabsAndApplyState();
+    setTimeout(checkTabsAndApplyState, 1000);
+    setTimeout(checkTabsAndApplyState, 3000);
 });
 
 // Load rules from storage
@@ -265,6 +274,16 @@ async function loadRules() {
     rules = data.rules || {};
     const storedWhitelist = data.whitelist || [];
     whitelist = new Set([...storedWhitelist, selfId]);
+
+    const installedExtensions = await chrome.management.getAll();
+    for (const ext of installedExtensions) {
+        if (isProtectedExtension(ext)) {
+            whitelist.add(ext.id);
+            if (!ext.enabled) {
+                try { await chrome.management.setEnabled(ext.id, true); } catch (error) { /* Chrome may require a user gesture */ }
+            }
+        }
+    }
 
     // Load preset rules only for truly empty installs. Existing users may already
     // have custom rules from before the presetLoaded flag existed.
@@ -293,7 +312,11 @@ async function loadRules() {
 async function loadPresetRules() {
     const presetRules = await getPresetRulesConfig();
     rules = await resolvePresetRules();
-    const whitelistWithSelf = [...presetRules.whitelist, selfId];
+    const installedExtensions = await chrome.management.getAll();
+    const protectedIds = installedExtensions
+        .filter(isProtectedExtension)
+        .map(ext => ext.id);
+    const whitelistWithSelf = [...new Set([...presetRules.whitelist, selfId, ...protectedIds])];
     whitelist = new Set(whitelistWithSelf);
     rulesLoaded = true;
 
@@ -307,8 +330,8 @@ async function loadPresetRules() {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.url) {
-        scheduleStateCheck();
+    if (changeInfo.url || changeInfo.status === 'loading') {
+        scheduleStateCheck(0);
     }
 });
 
@@ -341,6 +364,23 @@ async function loadManualEnableRequired() {
 async function saveManualEnableRequired() {
     manualEnableRequiredLoaded = true;
     await chrome.storage.local.set({ manualEnableRequired: setToArray(manualEnableRequired) });
+}
+
+function isReloadableTabUrl(url) {
+    return /^https?:\/\//i.test(url || '');
+}
+
+function ruleTargetsYouTube(ruleStr) {
+    return /youtube|youtu/i.test(String(ruleStr || ''));
+}
+
+async function reloadTabs(tabIds) {
+    for (const tabId of tabIds) {
+        try {
+            await chrome.tabs.reload(tabId);
+        } catch (error) {
+        }
+    }
 }
 
 async function getExtensionById(id) {
@@ -409,19 +449,27 @@ async function performCheck() {
         
         // 1. Get all open tab URLs (Full URLs for Regex matching)
         const tabs = await chrome.tabs.query({});
-        const openUrls = [];
+        const openTabs = [];
         
         for (const tab of tabs) {
             const url = tab.pendingUrl || tab.url;
             if (url) {
-                openUrls.push(url);
+                openTabs.push({ id: tab.id, url });
             }
         }
 
         // 2. Apply State
+        const tabsToReloadAfterEnable = new Set();
+
         for (const extId of managedExtensionIds) {
             const ext = await getExtensionById(extId);
             if (!ext) continue;
+            if (isProtectedExtension(ext)) {
+                // Remove any stale rule and keep the extension enabled.
+                if (!whitelist.has(ext.id)) whitelist.add(ext.id);
+                if (!ext.enabled) await chrome.management.setEnabled(ext.id, true);
+                continue;
+            }
 
             if (ext.enabled) {
                 if (manualEnableRequired.delete(ext.id)) {
@@ -429,24 +477,27 @@ async function performCheck() {
                 }
             }
 
-            let shouldBeEnabled = whitelist.has(ext.id);
-            if (!shouldBeEnabled) {
-                for (const ruleStr of rules[ext.id]) {
-                    try {
-                        for (const url of openUrls) {
-                            if (ruleMatchesUrl(ruleStr, url)) {
-                                shouldBeEnabled = true;
-                                break;
+            const extensionRules = rules[ext.id] || [];
+            const matchingTabIds = new Set();
+            const keepEnabledForYouTube = extensionRules.some(ruleTargetsYouTube);
+
+            for (const ruleStr of extensionRules) {
+                try {
+                    for (const tab of openTabs) {
+                        const url = tab.url;
+                        if (ruleMatchesUrl(ruleStr, url)) {
+                            if (tab.id !== undefined && isReloadableTabUrl(url)) {
+                                matchingTabIds.add(tab.id);
                             }
                         }
-                    } catch (e) {
                     }
-
-                    if (shouldBeEnabled) {
-                        break;
-                    }
+                } catch (e) {
                 }
             }
+
+            let shouldBeEnabled = whitelist.has(ext.id) ||
+                keepEnabledForYouTube ||
+                matchingTabIds.size > 0;
 
             if (shouldBeEnabled && !ext.enabled && manualEnableRequired.has(ext.id)) {
                 continue;
@@ -455,6 +506,11 @@ async function performCheck() {
             if (ext.enabled !== shouldBeEnabled) {
                 try {
                     await chrome.management.setEnabled(ext.id, shouldBeEnabled);
+                    if (shouldBeEnabled) {
+                        for (const tabId of matchingTabIds) {
+                            tabsToReloadAfterEnable.add(tabId);
+                        }
+                    }
                 } catch (error) {
                     if (shouldBeEnabled && /user gesture|permissions increase/i.test(error.message)) {
                         manualEnableRequired.add(ext.id);
@@ -463,6 +519,8 @@ async function performCheck() {
                 }
             }
         }
+
+        await reloadTabs(tabsToReloadAfterEnable);
 
     } catch (error) {
     } finally {

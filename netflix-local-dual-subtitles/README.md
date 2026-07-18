@@ -82,4 +82,4 @@ Chrome 扩展本身不能直接执行 `ollama serve`。项目提供了一个 Nat
 - 为避免多个 Netflix 标签页同时占满内存，本地模型同一时间只处理一个翻译请求；忙时插件会稍后自动重试。
 - Native Messaging 宿主注册在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`，如果扩展 ID 变化，需要重新运行安装脚本。
 - 插件中的模型下拉框提供 TranslateGemma 4B、HY-MT 1.8B、Qwen3 4B、Qwen3 1.7B 和 Qwen2.5 3B；Qwen3 会自动关闭 thinking 以降低字幕延迟。切换前请先用 Ollama 下载对应模型。
-- 翻译结果会通过本机 OpenCC 转换为简体中文；依赖目录位于扩展目录旁边的 `netflix-local-dual-subtitles-deps`，不属于 Chrome 扩展目录。
+- 翻译结果会通过本机随附的 OpenCC 转换为简体中文；OpenCC 依赖已放在本扩展目录内，加载 Chrome 扩展时只需要选择本目录。

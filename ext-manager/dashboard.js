@@ -5,11 +5,12 @@ let rules = {};
 let pinned = [];
 let currentEditId = null;
 let devRuntimeState = null;
+let currentExtensionFilter = 'all';
 
 function getDevRuntimeState() {
     if (devRuntimeState) return devRuntimeState;
 
-    const devIcon = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"%3E%3Crect width="48" height="48" rx="10" fill="%232563eb"/%3E%3Cpath fill="white" d="M15 14h18v4H20v4h11v4H20v4h13v4H15z"/%3E%3C/svg%3E';
+    const devIcon = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="10" fill="#0071e3"/><path fill="white" d="M15 14h18v4H20v4h11v4H20v4h13v4H15z"/></svg>')}`;
     devRuntimeState = {
         extensions: [
             { id: 'reader', name: 'Reader View Assistant', enabled: true, iconUrl: devIcon },
@@ -69,7 +70,9 @@ document.addEventListener('DOMContentLoaded', init);
 async function init() {
     await refreshData();
     setupNavigation();
+    setupDashboardActions();
     setupSearch();
+    setupExtensionFilters();
     setupModal();
     setupRuleActions();
     setupExtensionGridActions();
@@ -92,7 +95,7 @@ function renderCurrentView() {
     const viewId = activeNav ? activeNav.dataset.view : 'dashboard';
 
     if (viewId === 'extensions') {
-        renderExtensions();
+        renderExtensions(currentExtensionFilter);
     } else if (viewId === 'rules') {
         renderRulesView();
     }
@@ -102,6 +105,11 @@ function renderCurrentView() {
 function setupNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const viewSections = document.querySelectorAll('.view-section');
+    const pageSubtitles = {
+        dashboard: '了解浏览器状态，保持专注。',
+        extensions: '让扩展只在你需要的地方保持活跃。',
+        rules: '用清晰的规则，让自动化安静地工作。'
+    };
 
     for (const item of navItems) {
         item.addEventListener('click', (e) => {
@@ -109,8 +117,10 @@ function setupNavigation() {
             // nav state
             for (const navItem of navItems) {
                 navItem.classList.remove('active');
+                navItem.removeAttribute('aria-current');
             }
             item.classList.add('active');
+            item.setAttribute('aria-current', 'page');
             
             // view state
             const viewId = item.dataset.view;
@@ -122,9 +132,18 @@ function setupNavigation() {
             
             // title
             document.getElementById('pageTitle').textContent = item.textContent.trim();
+            document.getElementById('pageSubtitle').textContent = pageSubtitles[viewId] || '';
 
             renderCurrentView();
         });
+    }
+}
+
+function setupDashboardActions() {
+    const button = document.getElementById('heroExtensionsBtn');
+    const extensionsNav = document.querySelector('.nav-item[data-view="extensions"]');
+    if (button && extensionsNav) {
+        button.addEventListener('click', () => extensionsNav.click());
     }
 }
 
@@ -156,6 +175,7 @@ function renderExtensions(filter = 'all', searchTerm = '') {
     const searchInput = document.getElementById('globalSearch');
     const search = (searchTerm || searchInput?.value || '').toLowerCase();
     const fragment = document.createDocumentFragment();
+    let visibleCount = 0;
     const sortedExtensions = extensions.sort((a, b) => {
         // Pinned extensions first
         const aPinned = pinned.includes(a.id);
@@ -177,6 +197,8 @@ function renderExtensions(filter = 'all', searchTerm = '') {
         if (filter === 'enabled' && !ext.enabled) continue;
         if (filter === 'disabled' && ext.enabled) continue;
         if (search && !ext.name.toLowerCase().includes(search)) continue;
+
+        visibleCount += 1;
 
         const isManaged = !!rules[ext.id];
         const isPinned = pinned.includes(ext.id);
@@ -209,7 +231,34 @@ function renderExtensions(filter = 'all', searchTerm = '') {
         fragment.appendChild(card);
     }
 
+    const count = document.getElementById('extensionCount');
+    if (count) {
+        count.textContent = visibleCount === extensions.length ? `${extensions.length} 个扩展` : `${visibleCount} / ${extensions.length} 个扩展`;
+    }
+
+    if (visibleCount === 0) {
+        grid.innerHTML = '<div class="empty-message grid-empty"><strong>没有找到匹配的扩展</strong><span>试试其他关键词，或切换筛选条件。</span></div>';
+        return;
+    }
+
     grid.appendChild(fragment);
+}
+
+function setupExtensionFilters() {
+    const filterButtons = document.querySelectorAll('.filter-btn');
+
+    for (const button of filterButtons) {
+        button.addEventListener('click', () => {
+            currentExtensionFilter = button.dataset.filter || 'all';
+
+            for (const filterButton of filterButtons) {
+                filterButton.classList.toggle('active', filterButton === button);
+                filterButton.setAttribute('aria-selected', String(filterButton === button));
+            }
+
+            renderExtensions(currentExtensionFilter);
+        });
+    }
 }
 
 function setupExtensionGridActions() {
@@ -246,7 +295,7 @@ async function togglePin(id) {
     }
     await sendRuntimeMessage({ action: 'savePinned', pinned });
     if (getCurrentViewId() === 'extensions') {
-        renderExtensions();
+        renderExtensions(currentExtensionFilter);
     }
 }
 
@@ -260,7 +309,7 @@ function setupSearch() {
     const input = document.getElementById('globalSearch');
     input.addEventListener('input', (e) => {
         if (getCurrentViewId() === 'extensions') {
-            renderExtensions('all', e.target.value);
+            renderExtensions(currentExtensionFilter, e.target.value);
         }
     });
 }
@@ -276,6 +325,7 @@ const modal = document.getElementById('ruleModal');
 let tempRules = []; // Temporary rules for the currently open modal
 let rulePresets = null;
 let presetRulesInitialized = false;
+let previousModalFocus = null;
 
 function getRulePresets() {
     if (rulePresets) return rulePresets;
@@ -489,6 +539,14 @@ function setupPresetRules() {
 function setupModal() {
     document.getElementById('closeModal').addEventListener('click', closeModal);
     document.getElementById('cancelModal').addEventListener('click', closeModal);
+    modal.addEventListener('pointerdown', (event) => {
+        if (event.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.classList.contains('hidden')) {
+            closeModal();
+        }
+    });
 
     document.getElementById('addPresetRuleBtn').addEventListener('click', () => {
         const select = document.getElementById('presetRuleSelect');
@@ -671,12 +729,16 @@ function openRuleEditor(extId) {
     setupPresetRules();
     currentEditId = extId;
     const ext = extensions.find(e => e.id === extId);
+    if (!ext) return;
+    previousModalFocus = document.activeElement;
     tempRules = rules[extId] ? [...rules[extId]] : [];
     
     document.getElementById('modalTitle').textContent = `配置规则：${ext.name}`;
     renderModalRules();
     
     modal.classList.remove('hidden');
+    modal.removeAttribute('aria-hidden');
+    document.getElementById('closeModal').focus();
 }
 
 function renderModalRules() {
@@ -709,7 +771,12 @@ function renderModalRules() {
 }
 
 function closeModal() {
+    if (previousModalFocus && document.contains(previousModalFocus)) {
+        previousModalFocus.focus();
+    }
     modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
     currentEditId = null;
     tempRules = [];
+    previousModalFocus = null;
 }

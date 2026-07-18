@@ -7,8 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load saved settings (or defaults)
     // Note: defaults must match content.js
     chrome.storage.sync.get(['defaultSpeed', 'step'], (result) => {
-        defaultSpeedInput.value = result.defaultSpeed !== undefined ? result.defaultSpeed : 1.5;
-        stepInput.value = result.step !== undefined ? result.step : 0.25;
+        defaultSpeedInput.value = result.defaultSpeed !== undefined ? result.defaultSpeed : 1.3;
+        stepInput.value = result.step !== undefined ? result.step : 0.1;
     });
 
     function saveSettings() {
@@ -44,9 +44,17 @@ async function activateCurrentTab() {
         return false;
     }
 
-    await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['content.js']
-    });
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+        });
+
+        await chrome.tabs.sendMessage(tab.id, { type: 'quickSpeedShow' });
+    } catch {
+        // Restricted pages and tabs that are still loading may reject either
+        // injection or delivery. The content script remains safe to retry.
+    }
+
     return true;
 }

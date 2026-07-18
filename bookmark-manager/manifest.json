@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Bookmark Health Manager",
-  "version": "2.0.0",
-  "description": "自动扫描书签，检测无效链接，提供全屏现代化管理界面",
+  "name": "MarkNest - 书签管理器",
+  "version": "3.0.2",
+  "description": "更好用的 Chrome 书签主页：搜索、编辑、移动、批量整理和失效链接检测",
   "permissions": [
     "bookmarks",
-    "storage"
+    "storage",
+    "favicon",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"

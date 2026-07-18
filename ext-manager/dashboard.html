@@ -5,35 +5,48 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Extension Manager Pro</title>
+    <link rel="icon" href="icon16.png" type="image/png">
     <link rel="stylesheet" href="dashboard.css">
 </head>
 
 <body>
     <div class="app-container">
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside class="sidebar" aria-label="ExtManager 主导航">
             <div class="brand">
-                <div class="brand-icon">⚡</div>
-                <h1>ExtManager</h1>
+                <div class="brand-icon"><img src="icon48.png" alt=""></div>
+                <div class="brand-copy">
+                    <h1>ExtManager</h1>
+                    <p>Keep your browser light</p>
+                </div>
                 <span class="pro-badge">PRO</span>
             </div>
 
-            <nav class="nav-menu">
-                <a href="#" class="nav-item active" data-view="dashboard">
-                    <span class="icon">📊</span> 仪表盘
+            <nav class="nav-menu" aria-label="工作区">
+                <a href="#" class="nav-item active" data-view="dashboard" aria-current="page">
+                    <span class="icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></svg>
+                    </span>
+                    <span>仪表盘</span>
                 </a>
                 <a href="#" class="nav-item" data-view="extensions">
-                    <span class="icon">🧩</span> 扩展管理
+                    <span class="icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false"><path d="M19 13h-2.2a2.8 2.8 0 1 0-5.6 0H9V10.8a2.8 2.8 0 1 0-2.8-5.6H4v4.2a2.8 2.8 0 1 0 0 5.6V19h4.2a2.8 2.8 0 1 0 5.6 0h2.4v-2.2a2.8 2.8 0 1 0 2.8-3.8Z" /></svg>
+                    </span>
+                    <span>扩展管理</span>
                 </a>
                 <a href="#" class="nav-item" data-view="rules">
-                    <span class="icon">🤖</span> 自动化规则
+                    <span class="icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false"><path d="M12 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm-5 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm10 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM12 9v3m-5 3h10" /></svg>
+                    </span>
+                    <span>自动化规则</span>
                 </a>
             </nav>
 
             <div class="system-status">
                 <div class="status-row">
-                    <span>系统运行中</span>
-                    <div class="indicator active"></div>
+                    <span class="status-label"><span class="indicator active"></span>系统运行中</span>
+                    <span class="status-caption">LIVE</span>
                 </div>
                 <div class="memory-usage">
                     <span>预计节省内存</span>
@@ -47,9 +60,14 @@
 
             <!-- Top Bar -->
             <header class="top-bar">
-                <h2 id="pageTitle">仪表盘</h2>
+                <div class="top-heading">
+                    <span class="eyebrow">EXTENSION WORKSPACE</span>
+                    <h2 id="pageTitle">仪表盘</h2>
+                    <p id="pageSubtitle">了解浏览器状态，保持专注。</p>
+                </div>
                 <div class="search-box">
-                    <input type="text" placeholder="搜索扩展或规则..." id="globalSearch">
+                    <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m20 20-4.2-4.2m1.2-5.3a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" /></svg>
+                    <input type="search" placeholder="搜索扩展或规则" id="globalSearch" aria-label="搜索扩展或规则">
                 </div>
             </header>
 
@@ -58,18 +76,57 @@
 
                 <!-- Dashboard View (Stats) -->
                 <div id="view-dashboard" class="view-section active">
+                    <section class="dashboard-intro" aria-labelledby="dashboardWelcome">
+                        <div class="intro-copy">
+                            <span class="eyebrow">YOUR FOCUS LAYER</span>
+                            <h3 id="dashboardWelcome">让浏览器只为当前任务保持活跃。</h3>
+                            <p>ExtManager 会根据你正在访问的网站，及时启用需要的扩展，减少后台占用。</p>
+                            <button class="hero-link" id="heroExtensionsBtn" type="button">查看扩展 <span aria-hidden="true">→</span></button>
+                        </div>
+                        <div class="intro-status">
+                            <span class="metric-kicker">当前状态</span>
+                            <strong><span class="live-dot"></span>系统运行中</strong>
+                            <span>自动规则按需响应</span>
+                        </div>
+                    </section>
+
+                    <div class="content-heading stats-heading">
+                        <div>
+                            <span class="eyebrow">AT A GLANCE</span>
+                            <h3>核心状态</h3>
+                        </div>
+                        <span class="heading-note">实时同步</span>
+                    </div>
                     <div class="stats-grid">
                         <div class="stat-card">
+                            <div class="stat-head">
+                                <span class="stat-icon neutral" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" focusable="false"><path d="M7 4h10v4H7V4Zm-2 7h14v9H5v-9Zm4-3v3m6-3v3" /></svg>
+                                </span>
+                                <span class="stat-kicker">LIBRARY</span>
+                            </div>
                             <div class="stat-value" id="statTotal">0</div>
                             <div class="stat-label">已安装扩展</div>
                         </div>
                         <div class="stat-card highlight">
+                            <div class="stat-head">
+                                <span class="stat-icon blue" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" focusable="false"><path d="M12 4v16m-5-5 5 5 5-5M6 7h12" /></svg>
+                                </span>
+                                <span class="stat-kicker">ACTIVE NOW</span>
+                            </div>
                             <div class="stat-value" id="statActive">0</div>
                             <div class="stat-label">正在运行</div>
                         </div>
                         <div class="stat-card">
+                            <div class="stat-head">
+                                <span class="stat-icon green" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" focusable="false"><path d="M12 3v4m0 10v4M3 12h4m10 0h4m-2.6-6.4-2.8 2.8m-7.2 7.2-2.8 2.8m0-12.8 2.8 2.8m7.2 7.2 2.8 2.8" /></svg>
+                                </span>
+                                <span class="stat-kicker">AUTOMATION</span>
+                            </div>
                             <div class="stat-value" id="statManaged">0</div>
-                            <div class="stat-label">受控扩展 (Auto)</div>
+                            <div class="stat-label">受控扩展</div>
                         </div>
                     </div>
 
@@ -77,10 +134,18 @@
 
                 <!-- Extensions View -->
                 <div id="view-extensions" class="view-section">
-                    <div class="filter-bar">
-                        <button class="filter-btn active" data-filter="all">全部</button>
-                        <button class="filter-btn" data-filter="enabled">已启用</button>
-                        <button class="filter-btn" data-filter="disabled">已停用</button>
+                    <div class="content-heading section-heading">
+                        <div>
+                            <span class="eyebrow">LIBRARY</span>
+                            <h3>扩展管理</h3>
+                            <p>控制哪些工具随时待命，哪些工具只在需要时出现。</p>
+                        </div>
+                        <span class="section-count" id="extensionCount">0 个扩展</span>
+                    </div>
+                    <div class="filter-bar" role="tablist" aria-label="扩展筛选">
+                        <button class="filter-btn active" data-filter="all" role="tab" aria-selected="true">全部</button>
+                        <button class="filter-btn" data-filter="enabled" role="tab" aria-selected="false">已启用</button>
+                        <button class="filter-btn" data-filter="disabled" role="tab" aria-selected="false">已停用</button>
                     </div>
                     <div class="extension-grid" id="extGrid">
                         <!-- Rendered by JS -->
@@ -89,34 +154,48 @@
 
                 <!-- Automation Rules View -->
                 <div id="view-rules" class="view-section">
+                    <div class="content-heading section-heading">
+                        <div>
+                            <span class="eyebrow">AUTOMATION</span>
+                            <h3>自动化规则</h3>
+                            <p>让扩展只在真正需要的网页里运行。</p>
+                        </div>
+                        <span class="section-count">按网站触发</span>
+                    </div>
                     <div class="section-card">
                         <div class="rules-header">
+                            <div>
+                                <h4>规则库</h4>
+                                <p>访问匹配的网页时，ExtManager 会自动处理对应扩展。</p>
+                            </div>
                             <div class="rules-actions">
                                 <button class="btn-sm secondary-btn" id="importPresetBtn">导入预设规则</button>
                                 <button class="btn-sm secondary-btn" id="exportRulesBtn">导出当前规则</button>
                             </div>
                         </div>
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>扩展名称</th>
-                                    <th>触发规则</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="rulesTableBody">
-                                <!-- Rendered by JS -->
-                            </tbody>
-                        </table>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>扩展名称</th>
+                                        <th>触发规则</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rulesTableBody">
+                                    <!-- Rendered by JS -->
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Rules Editor Overlay (Modal) -->
-                <div id="ruleModal" class="modal hidden">
+                <div id="ruleModal" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="modalTitle">
                     <div class="modal-content">
                         <div class="modal-header">
                             <h3 id="modalTitle">配置规则: Extension Name</h3>
-                            <button class="close-btn" id="closeModal">×</button>
+                            <button class="close-btn" id="closeModal" type="button" aria-label="关闭规则配置">×</button>
                         </div>
                         <div class="modal-body">
                             <div class="rule-input-group">

@@ -23,11 +23,10 @@ from typing import Any
 sys.dont_write_bytecode = True
 
 
+# Keep the bundled OpenCC package inside the single extension directory. The
+# environment variable remains available for development or an external copy.
 LOCAL_DEPENDENCY_DIR = Path(
-    os.environ.get(
-        "NLLS_DEPENDENCY_DIR",
-        str(Path(__file__).resolve().parent.parent / "netflix-local-dual-subtitles-deps"),
-    )
+    os.environ.get("NLLS_DEPENDENCY_DIR", str(Path(__file__).resolve().parent))
 )
 if LOCAL_DEPENDENCY_DIR.is_dir():
     sys.path.insert(0, str(LOCAL_DEPENDENCY_DIR))
