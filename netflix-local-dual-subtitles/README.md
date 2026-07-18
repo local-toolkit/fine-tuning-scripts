@@ -2,11 +2,9 @@
 
 一个只在本机运行的 Chrome MV3 扩展：读取 Netflix 当前显示的字幕，通过 Ollama 调用本地模型翻译成简体中文，并把中文显示在原字幕上方。
 
-## 针对这台 MacBook Air 的模型选择
+## 模型说明
 
-当前机器是 Apple M1、16GB 内存。默认模型是 `translategemma:4b`：它是专门的翻译模型，Ollama 版本约 3.3GB，英语/日语/韩语到中文更适合字幕场景。服务默认通过 `keep_alive=10m` 保持短时热机，减少重复加载，同时避免长时间占用内存；可用环境变量 `NLLS_KEEP_ALIVE` 调整。
-
-如果想要低延迟且更偏重字幕翻译，可以在扩展设置里选择 `kaelri/hy-mt2:1.8b`。它基于腾讯发布的 Hy-MT 2.0 1.8B 权重，并带有适配 Ollama 的提示模板；扩展也保留 `qwen3:1.7b` 作为更轻量的通用模型。两种模型都不会调用云端 API。
+唯一支持的翻译模型是 `kaelri/hy-mt2:1.8b`。它基于腾讯发布的 Hy-MT 2.0 1.8B 权重，并带有适配 Ollama 的提示模板，针对字幕翻译场景做了优化。服务默认通过 `keep_alive=10m` 保持短时热机，减少重复加载，同时避免长时间占用内存；可用环境变量 `NLLS_KEEP_ALIVE` 调整。模型仅在本机运行，不会调用云端 API。
 
 ## 第一次使用
 
@@ -14,19 +12,7 @@
 2. 下载模型：
 
    ```bash
-   ollama pull translategemma:4b
-   ```
-
-   如果想使用 HY-MT 字幕翻译模式：
-
-   ```bash
    ollama run kaelri/hy-mt2:1.8b
-   ```
-
-   如果想使用更轻量模式：
-
-   ```bash
-   ollama pull qwen3:1.7b
    ```
 
 3. 启动本地桥接服务：
@@ -109,5 +95,5 @@ Chrome 扩展本身不能直接执行 `ollama serve`。项目提供了一个 Nat
 - 本地服务只监听 `127.0.0.1:8765`，不会暴露到局域网。
 - 为避免多个 Netflix 标签页同时占满内存，本地模型同一时间只处理一个翻译请求；忙时插件会稍后自动重试。
 - macOS 上 Native Messaging 宿主注册在 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`；Windows 上注册在 `HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\`（参见 [Windows 注册步骤](#windows)）。扩展 ID 变化后需要重新运行安装脚本。
-- 插件中的模型下拉框提供 TranslateGemma 4B、HY-MT2 1.8B、Qwen3 4B、Qwen3 1.7B 和 Qwen2.5 3B；Qwen3 会自动关闭 thinking 以降低字幕延迟。切换前请先用 Ollama 下载对应模型。已有的 `hy-mt1.5:1.8b` 设置会自动迁移到可用的 Hy-MT2 标签。
+- 插件中的模型下拉框仅提供 HY-MT2 1.8B，默认且唯一可选。已有的 `hy-mt1.5:1.8b` 设置会自动迁移到 Hy-MT2 标签。
 - 翻译结果会通过本机随附的 OpenCC 转换为简体中文；OpenCC 依赖已放在本扩展目录内，加载 Chrome 扩展时只需要选择本目录。
