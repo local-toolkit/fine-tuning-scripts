@@ -20,6 +20,7 @@ from typing import Any
 # Chrome rejects unpacked extension directories containing __pycache__.
 sys.dont_write_bytecode = True
 
+IS_WINDOWS = sys.platform == "win32"
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -27,15 +28,27 @@ DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 MODEL_KEEP_ALIVE = os.environ.get("NLLS_KEEP_ALIVE", "10m")
 MODEL_WARMUP_TIMEOUT = float(os.environ.get("NLLS_WARMUP_TIMEOUT", "15"))
 MAX_OLLAMA_RESPONSE_BYTES = 2 * 1024 * 1024
-LOG_FILE = Path.home() / "Library" / "Logs" / "NetflixLocalDualSubtitles" / "native-host.log"
 MAX_LOG_BYTES = 1 * 1024 * 1024
-RUNTIME_STATE_FILE = (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "NetflixLocalDualSubtitles"
-    / "runtime.json"
-)
+
+if IS_WINDOWS:
+    _appdata = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    LOG_FILE = _appdata / "NetflixLocalDualSubtitles" / "native-host.log"
+    RUNTIME_STATE_FILE = _appdata / "NetflixLocalDualSubtitles" / "runtime.json"
+else:
+    LOG_FILE = Path.home() / "Library" / "Logs" / "NetflixLocalDualSubtitles" / "native-host.log"
+    RUNTIME_STATE_FILE = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "NetflixLocalDualSubtitles"
+        / "runtime.json"
+    )
+
+if IS_WINDOWS:
+    import msvcrt
+
+    msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+    msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
 
 
 def log(message: str) -> None:
@@ -121,15 +134,33 @@ def terminate_pid(pid: int, expected: str = "") -> None:
         return
     try:
         if expected:
-            command = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
+            if IS_WINDOWS:
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                ).stdout
+                if "No tasks" in result or not result.strip():
+                    return
+            else:
+                command = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ).stdout
+                if expected not in command:
+                    return
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid)],
                 capture_output=True,
-                text=True,
-                check=False,
-            ).stdout
-            if expected not in command:
-                return
-        os.kill(pid, signal.SIGTERM)
+                timeout=5,
+            )
+        else:
+            os.kill(pid, signal.SIGTERM)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -139,14 +170,32 @@ def terminate_process_group(pid: int, expected: str = "") -> None:
         return
     try:
         if expected:
-            command = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
+            if IS_WINDOWS:
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                ).stdout
+                if "No tasks" in result or not result.strip():
+                    return
+            else:
+                command = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ).stdout
+                if expected not in command:
+                    return
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
                 capture_output=True,
-                text=True,
-                check=False,
-            ).stdout
-            if expected not in command:
-                return
+                timeout=5,
+            )
+            return
         process_group = os.getpgid(pid)
         os.killpg(process_group, signal.SIGTERM)
         deadline = time.monotonic() + 2.0
@@ -256,17 +305,30 @@ class Runner:
         if wait_until(self.ollama_ready, timeout=2.0):
             return
 
-        ollama = shutil.which("ollama") or "/opt/homebrew/bin/ollama"
+        ollama = shutil.which("ollama")
+        if not ollama:
+            if IS_WINDOWS:
+                raise RuntimeError("找不到 ollama 命令，请先安装 Ollama。")
+            ollama = "/opt/homebrew/bin/ollama"
         if not Path(ollama).exists():
             raise RuntimeError("找不到 ollama 命令，请先安装 Ollama。")
         log(f"启动 Ollama：{ollama} serve")
-        self.ollama_process = subprocess.Popen(
-            [ollama, "serve"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if IS_WINDOWS:
+            self.ollama_process = subprocess.Popen(
+                [ollama, "serve"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            self.ollama_process = subprocess.Popen(
+                [ollama, "serve"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         self.owns_ollama = True
         self.write_runtime_state()
         if not wait_until(self.ollama_ready, timeout=12.0):
@@ -292,15 +354,26 @@ class Runner:
         env["NLLS_MODEL"] = self.model
         server_path = BASE_DIR / "server.py"
         log(f"启动本地翻译服务：{server_path}")
-        self.server_process = subprocess.Popen(
-            [sys.executable, str(server_path)],
-            cwd=str(BASE_DIR),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if IS_WINDOWS:
+            self.server_process = subprocess.Popen(
+                [sys.executable, str(server_path)],
+                cwd=str(BASE_DIR),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            self.server_process = subprocess.Popen(
+                [sys.executable, str(server_path)],
+                cwd=str(BASE_DIR),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         self.owns_server = True
         self.write_runtime_state()
         if not wait_until(self.server_ready, timeout=10.0):
@@ -338,6 +411,7 @@ class Runner:
 
     def start(self, message: dict[str, Any]) -> None:
         self.model = str(message.get("model") or self.model)
+        log(f"收到模型：{self.model}")
         self.server_url = str(message.get("server_url") or DEFAULT_SERVER_URL).rstrip("/")
         self.start_ollama()
         models = self.installed_models()
@@ -389,6 +463,27 @@ class Runner:
     @staticmethod
     def terminate_process(process: subprocess.Popen | None) -> None:
         if not process or process.poll() is not None:
+            return
+        if IS_WINDOWS:
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/PID", str(process.pid)],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    pass
             return
         try:
             os.killpg(process.pid, signal.SIGTERM)
