@@ -272,7 +272,7 @@ class Runner:
     def __init__(self) -> None:
         self.ollama_url = DEFAULT_OLLAMA_URL
         self.server_url = DEFAULT_SERVER_URL
-        self.model = "translategemma:4b"
+        self.model = "kaelri/hy-mt2:1.8b"
         self.ollama_process: subprocess.Popen | None = None
         self.server_process: subprocess.Popen | None = None
         self.owns_ollama = False

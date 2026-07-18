@@ -39,7 +39,7 @@ except ImportError:
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("NLLS_PORT", "8765"))
-DEFAULT_MODEL = os.environ.get("NLLS_MODEL", "translategemma:4b")
+DEFAULT_MODEL = os.environ.get("NLLS_MODEL", "kaelri/hy-mt2:1.8b")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL_KEEP_ALIVE = os.environ.get("NLLS_KEEP_ALIVE", "10m")
 OLLAMA_TRANSLATION_TIMEOUT = float(os.environ.get("NLLS_TRANSLATION_TIMEOUT", "10"))
@@ -47,7 +47,7 @@ MAX_SUBTITLE_LENGTH = 500
 MAX_MODEL_NAME_LENGTH = 200
 MAX_MODEL_OUTPUT_LENGTH = 4_000
 MAX_OLLAMA_RESPONSE_BYTES = 2 * 1024 * 1024
-FALLBACK_MODEL = "translategemma:4b"
+FALLBACK_MODEL = "kaelri/hy-mt2:1.8b"
 SIMPLIFIER = OpenCC("t2s") if OpenCC else None
 LANGUAGE_FALLBACKS: set[str] = set()
 # Ollama is local and memory-heavy. Keep only one translation request in the
@@ -222,10 +222,9 @@ def translate_once(text: str, source_language: str, model: str, retry: bool = Fa
 
 def translate(text: str, source_language: str, model: str) -> str:
     if is_hy_mt_model(model):
-        # HY-MT is already specialized for translation. Avoid the generic
-        # TranslateGemma fallback, which makes occasional subtitle lines
-        # several times slower. Retry at most once only when the output is
-        # clearly unchanged or untranslated.
+        # HY-MT is specialized for translation; avoid the generic retry
+        # chain since fallback is the same model. Retry at most once only
+        # when the output is clearly unchanged or untranslated.
         result = translate_once(text, source_language, model)
         if not likely_untranslated(text, source_language, result):
             return result
@@ -255,7 +254,7 @@ def translate(text: str, source_language: str, model: str) -> str:
 
     raise RuntimeError(
         "模型返回了未完成的翻译，已阻止显示混合原文；"
-        "请稍后重试，或选择 TranslateGemma 4B。"
+        "请稍后重试。"
     )
 
 
