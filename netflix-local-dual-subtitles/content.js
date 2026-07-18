@@ -19,20 +19,29 @@
   const SUBTITLE_SETTLE_MS = 40;
   const SUBTITLE_POLL_MS = 150;
   const TRANSLATION_TIMEOUT_MS = 40000;
-  const SUBTITLE_SELECTOR = [
+  const MAX_TRANSLATION_RETRIES = 5;
+  const NATIVE_SUBTITLE_SELECTOR = [
     '.player-timedtext-text-container',
     '.player-timedtext',
-    '[data-uia*="timedtext"]',
+    '[data-uia*="timedtext"]'
+  ].join(',');
+  const SUBTITLE_SELECTOR = [
+    NATIVE_SUBTITLE_SELECTOR,
     '[data-uia*="subtitle"]',
     '[class*="subtitle"]'
   ].join(',');
+  const NATIVE_SUBTITLE_STYLE_ID = 'nlds-native-subtitle-style';
   let currentSettings = { ...DEFAULT_SETTINGS };
   let currentSource = '';
+  let translationRetryCount = 0;
+  let retryingSource = '';
   let currentRequest = 0;
   let pendingTimer = null;
   let retryTimer = null;
   let hideTimer = null;
   let overlay = null;
+  let translationLine = null;
+  let sourceLine = null;
   let latestAnchor = null;
   let lastTranslation = '';
   let lastRuntimeError = '';
@@ -42,6 +51,8 @@
   let lastLocation = location.href;
   let lastVideo = null;
   let lastSubtitleElement = null;
+  let suppressedSubtitleElement = null;
+  let suppressedSubtitleStyle = null;
   let dragFrame = 0;
   let readInterval = null;
   let contextInterval = null;
@@ -55,10 +66,87 @@
       .trim();
   }
 
+  function subtitleText(element) {
+    return normalize(element?.innerText || element?.textContent);
+  }
+
+  function isNativeSubtitle(element) {
+    return Boolean(element?.matches?.(NATIVE_SUBTITLE_SELECTOR));
+  }
+
+  function setNativeSubtitleVisibility(hidden) {
+    const existing = document.getElementById(NATIVE_SUBTITLE_STYLE_ID);
+    if (!hidden) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const style = document.createElement('style');
+    style.id = NATIVE_SUBTITLE_STYLE_ID;
+    style.textContent = `${NATIVE_SUBTITLE_SELECTOR} { opacity: 0 !important; }`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function subtitleRect(element) {
+    if (!element || !element.isConnected) return null;
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') return null;
+    // The extension hides Netflix's native subtitle after reading it. Keep
+    // accepting that element as the source of truth while the custom
+    // bilingual overlay is visible.
+    if (Number(style.opacity) === 0 && !isNativeSubtitle(element)
+      && element !== suppressedSubtitleElement) return null;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 4 && rect.height > 4 && rect.bottom > 0 && rect.top < window.innerHeight
+      ? rect
+      : null;
+  }
+
+  function restoreNativeSubtitle() {
+    if (!suppressedSubtitleElement) return;
+    const element = suppressedSubtitleElement;
+    if (element.isConnected && suppressedSubtitleStyle) {
+      element.style.opacity = suppressedSubtitleStyle.opacity;
+      element.style.visibility = suppressedSubtitleStyle.visibility;
+      delete element.dataset.nldsSuppressed;
+      delete element.dataset.nldsPreviousOpacity;
+      delete element.dataset.nldsPreviousVisibility;
+    }
+    suppressedSubtitleElement = null;
+    suppressedSubtitleStyle = null;
+  }
+
+  function suppressNativeSubtitle(element) {
+    if (!element) return;
+    if (suppressedSubtitleElement !== element) {
+      restoreNativeSubtitle();
+      suppressedSubtitleElement = element;
+      suppressedSubtitleStyle = {
+        opacity: element.style.opacity,
+        visibility: element.style.visibility
+      };
+    }
+    element.dataset.nldsSuppressed = 'true';
+    element.dataset.nldsPreviousOpacity = suppressedSubtitleStyle.opacity;
+    element.dataset.nldsPreviousVisibility = suppressedSubtitleStyle.visibility;
+    element.style.opacity = '0';
+  }
+
+  function restorePersistedNativeSubtitles() {
+    for (const element of document.querySelectorAll('[data-nlds-suppressed="true"]')) {
+      element.style.opacity = element.dataset.nldsPreviousOpacity || '';
+      element.style.visibility = element.dataset.nldsPreviousVisibility || '';
+      delete element.dataset.nldsSuppressed;
+      delete element.dataset.nldsPreviousOpacity;
+      delete element.dataset.nldsPreviousVisibility;
+    }
+  }
+
   function visibleRect(element) {
     if (!element || !element.isConnected) return null;
     const style = getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return null;
+    if (style.display === 'none' || style.visibility === 'hidden') return null;
+    if (Number(style.opacity) === 0 && !isNativeSubtitle(element)) return null;
     const rect = element.getBoundingClientRect();
     return rect.width > 4 && rect.height > 4 && rect.bottom > 0 && rect.top < window.innerHeight
       ? rect
@@ -101,16 +189,25 @@
 
   function readSubtitle() {
     if (lastSubtitleElement?.isConnected) {
-      const rect = visibleRect(lastSubtitleElement);
-      const text = normalize(lastSubtitleElement.innerText || lastSubtitleElement.textContent);
-      if (rect && text && text.length <= 500) return { text, rect };
+      const rect = subtitleRect(lastSubtitleElement);
+      const text = subtitleText(lastSubtitleElement);
+      if (rect && text && text.length <= 500) {
+        suppressNativeSubtitle(lastSubtitleElement);
+        return { text, rect };
+      }
+      if (lastSubtitleElement === suppressedSubtitleElement) restoreNativeSubtitle();
       lastSubtitleElement = null;
     }
     const candidate = subtitleCandidates()[0];
-    if (!candidate) return { text: '', rect: null };
-    // Cache only Netflix's own timed-text nodes. Generic fallback matches can
-    // also be static player UI and would otherwise hide a later real subtitle.
-    lastSubtitleElement = candidate.priority < 3 ? candidate.element : null;
+    if (!candidate) {
+      restoreNativeSubtitle();
+      return { text: '', rect: null };
+    }
+    // Keep the selected node cached even after its native text is hidden; this
+    // lets the polling loop continue reading Netflix's live text while the
+    // combined overlay replaces the native rendering.
+    lastSubtitleElement = candidate.element;
+    suppressNativeSubtitle(candidate.element);
     return { text: candidate.text, rect: candidate.rect };
   }
 
@@ -201,7 +298,16 @@
     const target = ensureOverlay();
     applyOverlayStyles();
     if (editMode) {
-      showTranslation(lastTranslation || '拖动这里调整中文字幕位置', latestAnchor, false);
+      // Read synchronously when the mode is entered. Translation may still be
+      // in flight, but the original line is already enough to drag the real
+      // subtitle container instead of a placeholder message.
+      const currentSubtitle = readSubtitle();
+      const source = currentSubtitle.text || currentSource;
+      if (source || lastTranslation) {
+        showTranslation(lastTranslation, currentSubtitle.rect || latestAnchor, false, source);
+      } else {
+        hideTranslation();
+      }
     } else if (lastTranslation) {
       showTranslation(lastTranslation, latestAnchor, false);
     } else {
@@ -238,11 +344,36 @@
       touchAction: 'none',
       userSelect: 'none',
       willChange: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '2px',
       opacity: '0',
       transition: 'opacity 100ms ease',
       whiteSpace: 'pre-line',
       wordBreak: 'break-word'
     });
+    translationLine = document.createElement('div');
+    translationLine.id = 'nlds-translation-line';
+    translationLine.setAttribute('aria-label', '翻译字幕');
+    sourceLine = document.createElement('div');
+    sourceLine.id = 'nlds-source-line';
+    sourceLine.setAttribute('aria-label', '原始字幕');
+    for (const line of [translationLine, sourceLine]) {
+      Object.assign(line.style, {
+        all: 'initial',
+        display: 'block',
+        maxWidth: '100%',
+        color: 'inherit',
+        font: 'inherit',
+        textAlign: 'center',
+        textShadow: 'inherit',
+        whiteSpace: 'pre-line',
+        wordBreak: 'break-word'
+      });
+    }
+    sourceLine.style.opacity = '0.88';
+    overlay.append(translationLine, sourceLine);
     overlay.addEventListener('pointerdown', handleOverlayPointerDown);
     root.appendChild(overlay);
     applyOverlayStyles();
@@ -253,12 +384,15 @@
     clearTimeout(retryTimer);
     retryTimer = null;
     currentSource = '';
+    translationRetryCount = 0;
+    retryingSource = '';
     lastSubtitleElement = null;
     currentRequest += 1;
     latestAnchor = null;
     lastTranslation = '';
     lastRuntimeError = '';
     pendingTranslation = null;
+    restoreNativeSubtitle();
     hideTranslation();
     scheduleRead();
   }
@@ -267,6 +401,8 @@
     clearTimeout(retryTimer);
     retryTimer = null;
     currentSource = '';
+    translationRetryCount = 0;
+    retryingSource = '';
     currentRequest += 1;
     pendingTranslation = null;
     lastTranslation = '';
@@ -275,14 +411,18 @@
     scheduleRead();
   }
 
-  function scheduleTranslationRetry(delay = 800) {
-    if (retryTimer) return;
+  function scheduleTranslationRetry() {
+    if (retryTimer || translationRetryCount >= MAX_TRANSLATION_RETRIES) return false;
+    const delay = Math.min(800 * (2 ** translationRetryCount), 5000);
+    translationRetryCount += 1;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       if (!pollingActive) return;
+      retryingSource = currentSource;
       currentSource = '';
       scheduleRead();
     }, delay);
+    return true;
   }
 
   function settingsNeedTranslationRefresh(previous, next) {
@@ -304,12 +444,15 @@
     applyOverlayStyles();
   }
 
-  function showTranslation(text, rect, remember = true) {
+  function showTranslation(text, rect, remember = true, source = currentSource) {
     const target = ensureOverlay();
     placeOverlay(rect);
     if (remember) lastTranslation = text;
-    target.textContent = text;
-    target.style.opacity = '1';
+    translationLine.textContent = normalize(text);
+    translationLine.style.display = translationLine.textContent ? 'block' : 'none';
+    sourceLine.textContent = normalize(source);
+    sourceLine.style.display = sourceLine.textContent ? 'block' : 'none';
+    target.style.opacity = translationLine.textContent || sourceLine.textContent ? '1' : '0';
     clearTimeout(hideTimer);
   }
 
@@ -321,7 +464,19 @@
       return;
     }
     hideTimer = setTimeout(() => {
-      if (overlay) overlay.style.opacity = '0';
+      if (!overlay) return;
+      // Keep the original line visible after a transient translation error;
+      // the native Netflix line is intentionally hidden while the combined
+      // container is active.
+      if (currentSource) {
+        translationLine.textContent = '';
+        translationLine.style.display = 'none';
+        sourceLine.textContent = normalize(currentSource);
+        sourceLine.style.display = sourceLine.textContent ? 'block' : 'none';
+        overlay.style.opacity = sourceLine.textContent ? '1' : '0';
+      } else {
+        overlay.style.opacity = '0';
+      }
     }, delay);
   }
 
@@ -372,6 +527,7 @@
         lastRuntimeError = error;
         showTranslation(`翻译服务：${error}`, rect, false);
         hideTranslation(3500);
+        if (!pendingTranslation) scheduleTranslationRetry();
       }
       continuePendingTranslation();
     }, TRANSLATION_TIMEOUT_MS);
@@ -393,6 +549,7 @@
           lastRuntimeError = error;
           showTranslation(`翻译服务：${error}`, rect, false);
           hideTranslation(3500);
+          if (!pendingTranslation) scheduleTranslationRetry();
         }
         continuePendingTranslation();
         return;
@@ -400,15 +557,16 @@
       if (!response?.ok) {
         const error = response?.error || '本地翻译服务未返回结果。';
         console.warn('[Netflix Local Dual Subtitles]', error);
-        const modelBusy = /本地模型正忙|HTTP 429/i.test(error);
-        if (isCurrent && modelBusy && !pendingTranslation) {
-          currentSource = '';
-          scheduleTranslationRetry();
-        }
         if (isCurrent && error !== lastRuntimeError) {
           lastRuntimeError = error;
           showTranslation(`翻译服务：${error}`, rect, false);
           hideTranslation(3500);
+        }
+        if (isCurrent && !pendingTranslation) {
+          // Keep currentSource until the backoff timer fires. Clearing it
+          // here lets the 150 ms polling loop submit the same subtitle again
+          // immediately, defeating the retry delay and amplifying 429s.
+          scheduleTranslationRetry();
         }
         continuePendingTranslation();
         return;
@@ -416,6 +574,7 @@
       const translated = normalize(response.translated);
       if (translated) {
         lastRuntimeError = '';
+        if (isCurrent) translationRetryCount = 0;
         putCache(cacheKey, translated);
         if (isCurrent) {
           const anchor = readSubtitle().rect || latestAnchor;
@@ -426,6 +585,7 @@
         lastRuntimeError = error;
         showTranslation(`翻译服务：${error}`, rect, false);
         hideTranslation(3500);
+        if (!pendingTranslation) scheduleTranslationRetry();
       }
       continuePendingTranslation();
     });
@@ -445,6 +605,7 @@
         lastRuntimeError = detail;
         showTranslation(`翻译服务：${detail}`, rect, false);
         hideTranslation(3500);
+        if (!pendingTranslation) scheduleTranslationRetry();
       }
       continuePendingTranslation();
     });
@@ -459,8 +620,11 @@
       if (!currentSettings.enabled) {
         if (currentSource || pendingTranslation || lastTranslation) currentRequest += 1;
         currentSource = '';
+        translationRetryCount = 0;
+        retryingSource = '';
         pendingTranslation = null;
         lastTranslation = '';
+        restoreNativeSubtitle();
         hideTranslation();
         return;
       }
@@ -469,8 +633,11 @@
       if (!text) {
         if (currentSource || pendingTranslation || lastTranslation) currentRequest += 1;
         currentSource = '';
+        translationRetryCount = 0;
+        retryingSource = '';
         pendingTranslation = null;
         lastTranslation = '';
+        restoreNativeSubtitle();
         hideTranslation();
         return;
       }
@@ -482,17 +649,24 @@
       clearTimeout(retryTimer);
       retryTimer = null;
       currentSource = text;
+      const isRetry = retryingSource === text;
+      retryingSource = '';
+      if (!isRetry) translationRetryCount = 0;
       currentRequest += 1;
       latestAnchor = rect;
       lastTranslation = '';
       lastRuntimeError = '';
       hideTranslation();
+      // Show the source line immediately. This keeps the combined container
+      // draggable while the local model is translating the next subtitle.
+      showTranslation('', rect, false, text);
       requestTranslation(text, rect, currentRequest);
     }, SUBTITLE_SETTLE_MS);
   }
 
   function startPolling() {
     if (pollingActive) return;
+    setNativeSubtitleVisibility(currentSettings.enabled);
     pollingActive = true;
     readInterval = setInterval(scheduleRead, SUBTITLE_POLL_MS);
     contextInterval = setInterval(detectNetflixContextChange, 500);
@@ -510,11 +684,14 @@
     clearTimeout(retryTimer);
     retryTimer = null;
     currentSource = '';
+    translationRetryCount = 0;
+    retryingSource = '';
     lastSubtitleElement = null;
     currentRequest += 1;
     pendingTranslation = null;
     lastTranslation = '';
     lastRuntimeError = '';
+    restoreNativeSubtitle();
     hideTranslation();
     if (dragFrame) {
       cancelAnimationFrame(dragFrame);
@@ -536,7 +713,15 @@
   }
 
   async function init() {
+    // A previous extension context may have been torn down while a native
+    // subtitle was suppressed. Restore those inline styles before scanning.
+    setNativeSubtitleVisibility(false);
+    restorePersistedNativeSubtitles();
+    // Enable suppression immediately using the default setting so a subtitle
+    // inserted while storage is loading cannot flash before the first poll.
+    setNativeSubtitleVisibility(true);
     currentSettings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+    setNativeSubtitleVisibility(currentSettings.enabled);
     notifyRuntime({ type: 'netflixOpened' });
     if (document.hidden) stopPolling();
     else startPolling();
@@ -567,6 +752,7 @@
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (changes[key]) currentSettings[key] = changes[key].newValue;
       }
+      setNativeSubtitleVisibility(currentSettings.enabled);
       applyOverlayStyles();
       if (settingsNeedTranslationRefresh(previousSettings, currentSettings)) {
         refreshTranslationContext();
@@ -577,6 +763,7 @@
       if (message?.type !== 'settingsUpdated') return;
       const previousSettings = { ...currentSettings };
       currentSettings = { ...currentSettings, ...message.settings };
+      setNativeSubtitleVisibility(currentSettings.enabled);
       applyOverlayStyles();
       if (settingsNeedTranslationRefresh(previousSettings, currentSettings)) {
         refreshTranslationContext();

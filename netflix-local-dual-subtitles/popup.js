@@ -242,7 +242,7 @@ async function toggleDragMode() {
   dragMode = !dragMode;
   $('dragMode').textContent = dragMode ? '退出拖动模式' : '进入拖动模式';
   await sendToActiveTab({ type: 'toggleEditMode', enabled: dragMode });
-  setStatus(dragMode ? '请直接拖动播放器上的中文字幕' : '已退出拖动模式');
+  setStatus(dragMode ? '请直接拖动播放器上的双语字幕' : '已退出拖动模式');
 }
 
 async function resetPosition() {
