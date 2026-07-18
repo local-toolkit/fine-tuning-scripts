@@ -403,6 +403,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         const current = await settings();
+        if (message.model) {
+          const msgModel = String(message.model).trim();
+          const migrated = LEGACY_MODEL_MIGRATIONS[msgModel] || msgModel;
+          if (migrated && migrated.length <= MAX_MODEL_NAME_LENGTH && !Array.from(migrated).some(c => c.charCodeAt(0) < 32)) current.model = migrated;
+        }
         const query = encodeURIComponent(current.model);
         const result = await fetchJson(`${current.serverUrl}/health?model=${query}`, {}, 2500);
         sendResponse({ ok: true, ...result, native_running: Boolean(nativePort) });
@@ -418,6 +423,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         if (message.action === 'start') {
           const current = await settings();
+          if (message.model) {
+            const msgModel = String(message.model).trim();
+            const migrated = LEGACY_MODEL_MIGRATIONS[msgModel] || msgModel;
+            if (migrated && migrated.length <= MAX_MODEL_NAME_LENGTH && !Array.from(migrated).some(c => c.charCodeAt(0) < 32)) current.model = migrated;
+          }
           const runtime = await startNative(current);
           const health = await ensureLocalService(current);
           await notifyNetflixTabs({ type: 'runtimeReady' });

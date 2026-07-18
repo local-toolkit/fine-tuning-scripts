@@ -193,7 +193,7 @@ function queueLivePreview() {
 
 function checkHealth() {
   setStatus('正在检查本地服务…');
-  sendRuntimeMessage({ type: 'health' }).then(({ response, error }) => {
+  sendRuntimeMessage({ type: 'health', model: $('model').value.trim() }).then(({ response, error }) => {
     if (error || !response?.ok) {
       setStatus(response?.error || error || '无法连接本地翻译服务。', true);
       return;
@@ -206,7 +206,7 @@ function checkHealth() {
 
 function startLocal() {
   setStatus('正在启动 Ollama 和本地翻译服务…');
-  sendRuntimeMessage({ type: 'localRuntime', action: 'start' }).then(({ response, error }) => {
+  sendRuntimeMessage({ type: 'localRuntime', action: 'start', model: $('model').value.trim() }).then(({ response, error }) => {
     if (error || !response?.ok) {
       setStatus(response?.error || error || '启动失败。请先安装 Native Messaging 宿主。', true);
       return;
